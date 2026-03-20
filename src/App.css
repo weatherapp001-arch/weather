@@ -1,0 +1,429 @@
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,1,0');
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Segoe UI', sans-serif;
+}
+
+body, html, #root {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+/* --- DAY THEME (BASE STYLES) --- */
+.full-screen-container {
+  width: 100vw;
+  height: 100vh;
+  /* Brighter base gradient */
+  background: linear-gradient(135deg, #4251A5 0%, #2D8C9F 100%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background 0.5s ease;
+}
+
+/* 1. Main Window (First level of darkness) */
+.main-app-window {
+  width: 90%;
+  height: 85%;
+  /* Lighter main window */
+  background: rgba(0, 0, 0, 0.05); 
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 30px;
+  display: flex;
+  flex-direction: column;
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.glass-header {
+  padding: 20px 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: white;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.logo-icon {
+  color: #FFB74D;
+}
+
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  opacity: 0.8;
+  font-size: 14px;
+}
+
+/* Input Field (matches card darkness) */
+.glass-input {
+  /* Lighter input */
+  background: rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 8px 15px;
+  color: white;
+  outline: none;
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.glass-sidebar {
+  width: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 40px;
+  gap: 40px;
+}
+
+.nav-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+.nav-btn.active {
+  color: white;
+}
+
+.nav-btn .material-symbols-outlined {
+  font-size: 28px;
+}
+
+.view-port {
+  flex: 1;
+  padding: 40px;
+  display: flex;
+  flex-direction: column;
+  color: white;
+  min-width: 0;
+}
+
+/* --- Dashboard --- */
+.cards-wrapper {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 30px;
+}
+
+/* 2. Cards (Second level of darkness) */
+.glass-card {
+  /* Lighter card base */
+  background: rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 200px;
+  transition: transform 0.3s ease, box-shadow 0.3s ease, background 0.3s ease;
+  cursor: pointer;
+}
+
+/* 3. Card Hover (Third level of darkness) */
+.glass-card:hover {
+  transform: translateY(-10px);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.3);
+  /* Lighter hover state */
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.card-header-top {
+  display: flex;
+  justify-content: space-between;
+}
+
+.card-header-top h2 {
+  font-size: 24px;
+  font-weight: 500;
+}
+
+.card-header-top span {
+  font-size: 18px;
+  opacity: 0.9;
+}
+
+.card-body-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.big-temp {
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sun-icon {
+  font-size: 48px;
+  color: #FFB74D;
+}
+
+.info-header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.large-icon {
+  font-size: 48px;
+}
+
+.info-label {
+  font-size: 28px;
+  font-weight: 400;
+}
+
+.info-val {
+  font-size: 40px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* --- Cloud / Temperature / Calendar Container --- */
+.cloud-view-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
+  padding-bottom: 20px;
+  min-width: 0;
+}
+
+.current-weather-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 40px;
+}
+
+.summary-left h3 {
+  font-size: 28px;
+  font-weight: 400;
+  margin-bottom: 10px;
+}
+
+.temp-display {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.huge-temp {
+  font-size: 80px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.weather-icon-large {
+  font-size: 64px;
+  color: #FFB74D;
+}
+
+.summary-right {
+  text-align: right;
+}
+
+.summary-right h2 {
+  font-size: 32px;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.summary-right p {
+  font-size: 24px;
+  opacity: 0.9;
+}
+
+.scroll-wrapper {
+  width: 100%;
+}
+
+.hourly-list, .daily-list {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  padding-bottom: 15px;
+  scrollbar-width: none;
+}
+
+.hourly-list::-webkit-scrollbar, .daily-list::-webkit-scrollbar {
+  display: none;
+}
+
+/* Consistent Darkness for List Cards */
+.hourly-item, .daily-card {
+  flex-grow: 0;
+  flex-shrink: 0;
+  flex-basis: 100px;
+  /* Lighter card base */
+  background: rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 20px 10px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.3s ease;
+  cursor: pointer;
+}
+
+.hourly-item:hover, .daily-card:hover {
+  transform: translateY(-5px);
+  /* Lighter hover state */
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.item-time {
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.item-icon {
+  font-size: 32px;
+}
+
+.item-temp {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.scroll-hint-right {
+  text-align: right;
+  font-size: 14px;
+  opacity: 0.8;
+  margin-top: 10px;
+}
+
+/* Temperature Card active state */
+.daily-card.active {
+  /* Lighter active state */
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  transform: translateY(-8px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* --- NEW UTILITY CLASSES (For Calendar & Temp Views) --- */
+.hide-scroll {
+  overflow-y: auto;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+}
+
+.hide-scroll::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+.dropdown-btn {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  padding: 6px 16px;
+  border-radius: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+.dropdown-btn:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 8px 24px;
+  border-radius: 25px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  transition: all 0.3s ease;
+}
+
+.tab-btn.active {
+  background: rgba(255, 208, 91, 0.1);
+  border-color: #FFB74D;
+  color: #FFB74D;
+}
+
+.y-axis span {
+  display: block;
+  height: 20%;
+  text-align: right;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  accent-color: #448AFF; /* Match your app's blue accent */
+}
+
+
+/* --- DARK THEME OVERRIDES --- */
+
+/* Night Theme Background */
+.dark-theme.full-screen-container {
+  background: linear-gradient(135deg, #4B2B7A 0%, #261642 100%);
+}
+
+/* Step up the darkness for the deeper night theme */
+.dark-theme .main-app-window {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dark-theme .glass-card, 
+.dark-theme .hourly-item, 
+.dark-theme .daily-card,
+.dark-theme .glass-input,
+.dark-theme .dropdown-btn {
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.dark-theme .glass-card:hover, 
+.dark-theme .hourly-item:hover, 
+.dark-theme .daily-card:hover,
+.dark-theme .dropdown-btn:hover {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.dark-theme .daily-card.active {
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
