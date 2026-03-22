@@ -117,7 +117,7 @@ const AlertPanel = ({ searchQuery }) => {
       let threat = "Atmospheric Stability";
       let advice = "No immediate environmental hazards detected. Conditions are safe.";
 
-      if (aqi >= 4) {
+      if (aqi >= 150) {
         threat = "Hazardous Air Quality";
         advice = `AQI Level ${aqi}: Dangerous pollution detected. Please wear an N95 mask and stay indoors.`;
       } else if (temp > 40) {

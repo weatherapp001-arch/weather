@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 // API Configuration
-const API_KEY = '2e24befa68c3a074d74625c8ed3099a0';
+const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 const FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast';
 const AIR_URL = 'https://api.openweathermap.org/data/2.5/air_pollution/forecast'; 
 

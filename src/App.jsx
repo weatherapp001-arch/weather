@@ -4,10 +4,10 @@ import Dashboard from './components/Dashboard';
 import Cloud from './components/Cloud';
 import Temperature from './components/Temperature';
 import Calendar from './components/Calendar';
-import AlertPanel from './components/AlertPanel'; // <-- 1. IMPORT ADDED HERE
+import AlertPanel from './components/AlertPanel'; 
 
 // We need the API key here to fetch the city suggestions
-const API_KEY = '2e24befa68c3a074d74625c8ed3099a0';
+const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 
 function App() {
   const [activeTab, setActiveTab] = useState('cloud'); 

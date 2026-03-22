@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import '../App.css';
 
-const OPENWEATHER_API_KEY = '2e24befa68c3a074d74625c8ed3099a0';
+const OPENWEATHER_API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 const GEO_URL = 'https://api.openweathermap.org/data/2.5/weather';
 
 const generateSmoothPath = (dataPoints, maxValue, minValue = 0, height = 300, padding = 60) => {
