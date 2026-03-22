@@ -1,225 +1,229 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import '../App.css'; 
+import React, { useState, useEffect, useRef } from 'react';
 
+// API Configuration
+const API_KEY = '2e24befa68c3a074d74625c8ed3099a0';
+const FORECAST_URL = 'https://api.openweathermap.org/data/2.5/forecast';
+const AIR_URL = 'https://api.openweathermap.org/data/2.5/air_pollution/forecast'; 
+
+const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const dayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const icons = ['sunny', 'cloudy', 'partly_cloudy_day', 'rainy', 'thunderstorm', 'cloudy_snowing'];
 
-export default function Temperature() {
+const mapApiToMaterialIcon = (id, iconCode) => {
+  const isNight = iconCode.includes('n');
+  if (id === 800) return isNight ? 'clear_night' : 'sunny';
+  if (id === 801 || id === 802) return isNight ? 'partly_cloudy_night' : 'partly_cloudy_day';
+  if (id === 803 || id === 804) return 'cloud';
+  if (id >= 200 && id < 300) return 'thunderstorm';
+  if (id >= 300 && id < 400) return 'grain';
+  if (id >= 500 && id < 600) return 'rainy';
+  if (id >= 600 && id < 700) return 'weather_snow';
+  return isNight ? 'clear_night' : 'sunny';
+};
+
+const generateSmoothPath = (dataPoints, maxValue, minValue = 0) => {
+  if (!dataPoints || dataPoints.length === 0) return 'M0,100 L800,100'; 
+  let points = [...dataPoints];
+  if (points.length === 1) points.push(points[0]); 
+  const range = maxValue - minValue || 1;
+  const getY = (val) => 100 - (((Math.max(minValue, Math.min(maxValue, val)) - minValue) / range) * 100); 
+  const stepX = 800 / Math.max(1, points.length - 1);
+  let path = `M0,${getY(points[0])}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const x1 = i * stepX;
+    const y1 = getY(points[i]);
+    const x2 = (i + 1) * stepX;
+    const y2 = getY(points[i + 1]);
+    const cx = x1 + stepX / 2;
+    path += ` C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+  }
+  return path;
+};
+
+export default function Temperature({ searchQuery }) {
   const [activeDayIndex, setActiveDayIndex] = useState(0);
-  const [activeFeature, setActiveFeature] = useState('wind'); // Defaulted to wind based on your image
-  const [currentTime, setCurrentTime] = useState(new Date());
-  
-  // Create a reference to the chart container for auto-scrolling
+  const [activeFeature, setActiveFeature] = useState('overview');
+  const [forecastData, setForecastData] = useState([]);
+  const [locationName, setLocationName] = useState('Locating...');
+  const [loading, setLoading] = useState(true);
   const chartRef = useRef(null);
 
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const forecastData = useMemo(() => {
-    let today = new Date();
-    let data = [];
-    for (let i = 0; i < 7; i++) {
-      let targetDate = new Date(today);
-      targetDate.setDate(today.getDate() + i);
-      
-      let high = Math.floor(Math.random() * (35 - 25 + 1)) + 25;
-      let low = high - Math.floor(Math.random() * (12 - 7 + 1)) - 7;
-      let icon = icons[Math.floor(Math.random() * icons.length)];
-      
-      if (i === 0) { high = 31; low = 22; icon = 'sunny'; }
-
-      let aqiDataArray = [];
-      let precipHeights = [];
-      for (let j = 0; j < 6; j++) {
-        let val = Math.floor(Math.random() * 95) + 5; 
-        let color = val < 30 ? '#4CAF50' : (val < 60 ? '#FFEB3B' : '#FF9800');
-        aqiDataArray.push({ height: val, color: color });
-        precipHeights.push(icon === 'rainy' || icon === 'thunderstorm' ? Math.floor(Math.random() * 80) + 10 : Math.floor(Math.random() * 10));
+  const fetchChartData = async (query) => {
+    setLoading(true);
+    try {
+      let url = '';
+      if (query.lat && query.lon) {
+        url = `${FORECAST_URL}?lat=${query.lat}&lon=${query.lon}&units=metric&appid=${API_KEY}`;
+      } else if (query.city) {
+        url = `${FORECAST_URL}?q=${query.city}&units=metric&appid=${API_KEY}`;
       }
 
-      data.push({
-        dateObj: targetDate,
-        dayStr: i === 0 ? 'Now' : dayNames[targetDate.getDay()],
-        cardDay: i === 0 ? 'Now' : dayShort[targetDate.getDay()],
-        temp: high,
-        low: low,
-        icon: icon,
-        overviewPath: `M0,${90-i*4} Q200,${50+i*8} 400,${20+i*4} T800,${60-i*4}`,
-        windPath: `M0,${70-i*2} Q150,${90-i*8} 300,${30+i*4} T600,${50-i*4} T800,${80-i*2}`,
-        humidityPath: `M0,${50+i*4} Q200,${40-i*4} 400,${80-i*4} T800,${30+i*4}`,
-        precipHeights,
-        aqiData: aqiDataArray
-      });
-    }
-    return data;
-  }, []);
+      const res = await fetch(url);
+      const data = await res.json();
 
-  const activeData = forecastData[activeDayIndex];
-  const displayDate = activeData.dateObj.getDate();
-  const displayMonth = monthNames[activeData.dateObj.getMonth()];
-  const headerDateString = activeDayIndex === 0 ? 'Now' : `${activeData.dayStr}, ${displayDate} ${displayMonth}`;
+      if (data.cod === "200") {
+        let cityName = query.name ? query.name.split(',')[0] : data.city.name;
+        if (cityName === 'Jahāngīrābād' || cityName === 'George Town') cityName = 'Prayagraj';
+        setLocationName(`${cityName}, ${data.city.country}`);
 
-  // Handle clicking a feature pill: update state AND scroll down
-  const handleFeatureClick = (feature) => {
-    setActiveFeature(feature);
-    
-    // Smoothly scroll the chart into view
-    if (chartRef.current) {
-      setTimeout(() => {
-        chartRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      }, 50); // Small delay ensures React state updates before scrolling
+        const airRes = await fetch(`${AIR_URL}?lat=${data.city.coord.lat}&lon=${data.city.coord.lon}&appid=${API_KEY}`);
+        const airData = await airRes.json();
+
+        const dailyBuckets = [];
+        let currentDayIndex = -1;
+        let lastDayDate = -1;
+
+        data.list.forEach((item) => {
+          const dateObj = new Date(item.dt * 1000);
+          const dayDate = dateObj.getDate();
+          if (dayDate !== lastDayDate && dailyBuckets.length < 5) {
+            currentDayIndex++;
+            lastDayDate = dayDate;
+            dailyBuckets.push({
+              dateObj: dateObj,
+              dayStr: currentDayIndex === 0 ? 'Now' : dayNames[dateObj.getDay()],
+              cardDay: currentDayIndex === 0 ? 'Now' : dayShort[dateObj.getDay()],
+              temps: [], winds: [], humidities: [], rainVolume: [], aqiValues: [], aqiColors: [], aqiHeights: [], times: [] 
+            });
+          }
+          if (currentDayIndex >= 0 && currentDayIndex < 5 && dailyBuckets[currentDayIndex].temps.length < 6) {
+            const bucket = dailyBuckets[currentDayIndex];
+            bucket.temps.push(item.main.temp);
+            bucket.winds.push(item.wind.speed * 3.6); 
+            bucket.humidities.push(item.main.humidity);
+            bucket.rainVolume.push(item.rain ? item.rain['3h'] : 0);
+            bucket.times.push(dateObj.toLocaleTimeString([], { hour: 'numeric', hour12: true }).replace(' ', ''));
+            
+            // LOGIC: Calculate Numerical AQI using PM2.5 (Realistic scale 0-200)
+            const matchingAir = airData.list.find(a => Math.abs(a.dt - item.dt) < 10000);
+            const pm25 = matchingAir ? matchingAir.components.pm2_5 : 20;
+            const displayAqi = Math.round(pm25 * 3.2); // Scaling multiplier to match standard AQI numbers
+            
+            bucket.aqiValues.push(displayAqi);
+            // Height logic for 0-200 scale
+            bucket.aqiHeights.push(Math.min((displayAqi / 200) * 100, 100));
+            
+            // Color logic based on standard AQI thresholds
+            let color = '#4CAF50'; // Good
+            if (displayAqi > 50) color = '#FFEB3B'; // Moderate
+            if (displayAqi > 100) color = '#FF9800'; // Unhealthy for sensitive
+            if (displayAqi > 150) color = '#F44336'; // Unhealthy
+            bucket.aqiColors.push(color);
+          }
+        });
+
+        setForecastData(dailyBuckets.map(b => ({ ...b, temp: Math.round(Math.max(...b.temps)), icon: mapApiToMaterialIcon(800, '01d') })));
+        setActiveDayIndex(0);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
     }
   };
 
+  useEffect(() => {
+    if (searchQuery) fetchChartData(searchQuery);
+    else {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => fetchChartData({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        () => fetchChartData({ city: 'Prayagraj', name: 'Prayagraj' })
+      );
+    }
+  }, [searchQuery]);
+
+  if (loading || forecastData.length === 0) return <div style={{ color: 'white', padding: '40px' }}>Loading...</div>;
+
+  const activeData = forecastData[activeDayIndex];
+  const maxTemp = Math.ceil(Math.max(...activeData.temps) + 2);
+  const minTemp = Math.floor(Math.min(...activeData.temps) - 2);
+  const maxWind = Math.ceil(Math.max(...activeData.winds, 5) + 5);
+  const maxRain = Math.max(...activeData.rainVolume, 1);
+
   return (
-    <>
-      {/* Inline styles to completely hide the scrollbar while keeping scroll functionality */}
-      <style>{`
-        .hide-scroll {
-          overflow-y: auto;
-          scrollbar-width: none; /* Firefox */
-          -ms-overflow-style: none; /* IE and Edge */
-        }
-        .hide-scroll::-webkit-scrollbar {
-          display: none; /* Chrome, Safari, Opera */
-        }
-      `}</style>
+    <div className="cloud-view-container hide-scroll" style={{ height: '100%', paddingBottom: '40px' }}>
+      <div className="current-weather-summary">
+        <div className="summary-left">
+          <h3>{activeDayIndex === 0 ? 'Now' : `${activeData.dayStr}, ${activeData.dateObj.getDate()} ${monthNames[activeData.dateObj.getMonth()]}`}</h3>
+          <div className="temp-display">
+            <span className="huge-temp">{activeData.temp}&deg;</span>
+            <span className="material-symbols-outlined weather-icon-large" style={{ color: '#FFB74D' }}>sunny</span>
+          </div>
+          <h4 style={{ margin: '5px 0 0 0', opacity: 0.8, fontSize: '18px' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '16px', marginRight: '5px' }}>location_on</span>
+            {locationName}
+          </h4>
+        </div>
+        <div className="summary-right"><h2>Detailed View</h2></div>
+      </div>
 
-      {/* Added the 'hide-scroll' class here so the user can scroll up/down */}
-      <div className="cloud-view-container hide-scroll" style={{ height: '100%', paddingBottom: '40px' }}>
-        
-        {/* Top Weather Summary */}
-        <div className="current-weather-summary">
-          <div className="summary-left">
-            <h3>{headerDateString}</h3>
-            <div className="temp-display">
-              <span className="huge-temp">{activeData.temp}&deg;</span>
-              <span className="material-symbols-outlined weather-icon-large" style={{ color: activeData.icon === 'sunny' ? '#FFB74D' : 'white' }}>
-                {activeData.icon}
-              </span>
+      <div className="scroll-wrapper">
+        <div className="daily-list">
+          {forecastData.map((data, index) => (
+            <div key={index} className={`daily-card ${activeDayIndex === index ? 'active' : ''}`} onClick={() => setActiveDayIndex(index)}>
+              <span className="item-time">{data.cardDay}</span>
+              <span className="material-symbols-outlined item-icon" style={{ color: '#FFB74D' }}>sunny</span>
+              <span className="item-temp">{data.temp}&deg;</span>
             </div>
-          </div>
-          <div className="summary-right">
-            <h2>{activeData.icon === 'sunny' ? 'Partly Sunny' : 'Cloudy'}</h2>
-            <p>Feels like <strong>{activeData.temp + 3}&deg;</strong></p>
-          </div>
-        </div>
-
-        {/* Horizontal Scroll list */}
-        <div className="scroll-wrapper">
-          <div className="daily-list">
-            {forecastData.map((data, index) => (
-              <div 
-                key={index} 
-                className={`daily-card ${activeDayIndex === index ? 'active' : ''}`} 
-                onClick={() => setActiveDayIndex(index)}
-              >
-                <span className="item-time">{data.cardDay}</span>
-                <span className="material-symbols-outlined item-icon" style={{ color: data.icon === 'sunny' ? '#FFB74D' : 'inherit' }}>
-                  {data.icon}
-                </span>
-                <span className="item-temp">{data.temp}&deg;</span>
-              </div>
-            ))}
-          </div>
-          <div className="scroll-hint-right" style={{ marginBottom: '10px' }}>scroll &rarr;</div>
-        </div>
-
-        {/* Feature Selection Menu */}
-        <div style={{ display: 'flex', gap: '15px', marginTop: '15px', marginBottom: '20px' }}>
-          {['overview', 'precipitation', 'wind', 'air-quality', 'humidity'].map(feature => (
-            <button 
-              key={feature}
-              onClick={() => handleFeatureClick(feature)}
-              style={{
-                background: activeFeature === feature ? 'rgba(0,0,0,0.25)' : 'transparent',
-                border: `1px solid ${activeFeature === feature ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)'}`,
-                color: activeFeature === feature ? 'white' : 'rgba(255,255,255,0.6)',
-                padding: '10px 24px',
-                borderRadius: '25px',
-                cursor: 'pointer',
-                fontSize: '15px',
-                textTransform: 'capitalize',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              {feature.replace('-', ' ')}
-            </button>
           ))}
         </div>
+      </div>
 
-        {/* Chart Container - Added chartRef here so it knows where to scroll */}
-        <div ref={chartRef} className="glass-card" style={{ flex: 'none', padding: '25px', display: 'flex', flexDirection: 'column', height: '240px' }}>
-          <h4 style={{ fontSize: '18px', opacity: 0.9, marginBottom: '20px', textTransform: 'capitalize', fontWeight: 500 }}>
-            {activeFeature.replace('-', ' ')} {activeFeature === 'humidity' ? '& Dew Point' : ''}
-          </h4>
-          
-          <div style={{ display: 'flex', flex: 1, position: 'relative' }}>
+      <div style={{ display: 'flex', gap: '15px', margin: '15px 0 20px 0' }}>
+        {['overview', 'precipitation', 'wind', 'air-quality', 'humidity'].map(f => (
+          <button key={f} onClick={() => { setActiveFeature(f); chartRef.current?.scrollIntoView({ behavior: 'smooth' }); }}
+            style={{ background: activeFeature === f ? 'rgba(0,0,0,0.25)' : 'transparent', border: `1px solid ${activeFeature === f ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)'}`, color: activeFeature === f ? 'white' : 'rgba(255,255,255,0.6)', padding: '10px 24px', borderRadius: '25px', cursor: 'pointer', textTransform: 'capitalize' }}>
+            {f.replace('-', ' ')}
+          </button>
+        ))}
+      </div>
+
+      <div ref={chartRef} className="glass-card" style={{ flex: 'none', padding: '25px', display: 'flex', flexDirection: 'column', height: '240px' }}>
+        <h4 style={{ fontSize: '18px', opacity: 0.9, marginBottom: '20px', textTransform: 'capitalize' }}>{activeFeature.replace('-', ' ')}</h4>
+        <div style={{ display: 'flex', flex: 1, position: 'relative' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '13px', opacity: 0.7, paddingRight: '20px', textAlign: 'right', minWidth: '60px' }}>
+            {activeFeature === 'overview' && <><span>{maxTemp}&deg;</span><span>{Math.round((maxTemp+minTemp)/2)}&deg;</span><span>{minTemp}&deg;</span></>}
+            {activeFeature === 'precipitation' && <><span>{maxRain.toFixed(1)} mm</span><span>{(maxRain/2).toFixed(1)}</span><span>0</span></>}
+            {activeFeature === 'wind' && <><span>{maxWind} km/h</span><span>{Math.round(maxWind/2)}</span><span>0</span></>}
             
-            {/* Y-Axis Units */}
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontSize: '13px', opacity: 0.7, paddingRight: '20px', textAlign: 'right', minWidth: '60px' }}>
-              {activeFeature === 'overview' && <><span>40&deg;C</span><span>30&deg;C</span><span>20&deg;C</span><span>10&deg;C</span></>}
-              {activeFeature === 'precipitation' && <><span>1.0 cm</span><span>0.5 cm</span><span>0 cm</span></>}
-              {activeFeature === 'wind' && <><span>60 km/h</span><span>30 km/h</span><span>0 km/h</span></>}
-              {activeFeature === 'air-quality' && <><span>150 AQI</span><span>100 AQI</span><span>50 AQI</span><span>0 AQI</span></>}
-              {activeFeature === 'humidity' && <><span>100 %</span><span>50 %</span><span>0 %</span></>}
-            </div>
+            {/* UPDATED: Numerical Y-Axis for AQI (200 down to 0) */}
+            {activeFeature === 'air-quality' && <><span>200</span><span>100</span><span>0</span></>}
+            
+            {activeFeature === 'humidity' && <><span>100 %</span><span>50 %</span><span>0 %</span></>}
+          </div>
 
-            {/* Chart Visual Area */}
-            <div style={{ flex: 1, position: 'relative' }}>
-              
-              {/* Dynamic SVG Lines */}
-              {(activeFeature === 'overview' || activeFeature === 'wind' || activeFeature === 'humidity') && (
-                <svg width="100%" height="100%" viewBox="0 0 800 100" preserveAspectRatio="none" style={{ transition: 'all 0.5s ease' }}>
-                  {activeFeature === 'overview' && (
-                    <>
-                      <path d={`${activeData.overviewPath} L800,100 L0,100 Z`} fill="rgba(255, 208, 91, 0.2)" />
-                      <path d={activeData.overviewPath} fill="none" stroke="#FFB74D" strokeWidth="4" />
-                    </>
-                  )}
-                  {activeFeature === 'wind' && (
-                    <path d={activeData.windPath} fill="none" stroke="#00B4D8" strokeWidth="4" />
-                  )}
-                  {activeFeature === 'humidity' && (
-                    <>
-                      <path d={`${activeData.humidityPath} L800,100 L0,100 Z`} fill="rgba(0, 180, 216, 0.3)" />
-                      <path d={activeData.humidityPath} fill="none" stroke="#00B4D8" strokeWidth="3" />
-                      <path d={`M0,70 Q200,60 400,80 T800,50`} fill="none" stroke="#64DFDF" strokeWidth="3" strokeDasharray="6,6" />
-                    </>
-                  )}
-                </svg>
-              )}
-
-              {/* Dynamic Bar Charts */}
-              {(activeFeature === 'precipitation' || activeFeature === 'air-quality') && (
-                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '100%', padding: '0 10px' }}>
-                   {(activeFeature === 'precipitation' ? activeData.precipHeights : activeData.aqiData).map((val, i) => (
-                     <div key={i} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%', width: '30px' }}>
-                       <div style={{ 
-                         width: '100%', 
-                         height: `${activeFeature === 'precipitation' ? val : val.height}%`, 
-                         backgroundColor: activeFeature === 'precipitation' ? '#00B4D8' : val.color,
-                         borderRadius: '6px 6px 0 0',
-                         transition: 'all 0.5s ease'
-                       }}></div>
-                     </div>
-                   ))}
-                 </div>
-              )}
-
-              {/* Mock X-Axis */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', opacity: 0.7, position: 'absolute', bottom: '-25px', left: 0, right: 0 }}>
-                <span>12 AM</span><span>4 AM</span><span>8 AM</span><span>12 PM</span><span>4 PM</span><span>8 PM</span>
-              </div>
+          <div style={{ flex: 1, position: 'relative' }}>
+            {(activeFeature === 'overview' || activeFeature === 'wind' || activeFeature === 'humidity') && (
+              <svg width="100%" height="100%" viewBox="0 0 800 100" preserveAspectRatio="none">
+                <path d={generateSmoothPath(activeFeature==='overview'?activeData.temps:activeFeature==='wind'?activeData.winds:activeData.humidities, activeFeature==='overview'?maxTemp:activeFeature==='wind'?maxWind:100, activeFeature==='overview'?minTemp:0)} fill="none" stroke={activeFeature==='overview'?'#FFB74D':'#00B4D8'} strokeWidth="4" />
+              </svg>
+            )}
+            {(activeFeature === 'precipitation' || activeFeature === 'air-quality') && (
+               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '100%', padding: '0 10px' }}>
+                 {activeData.temps.map((_, i) => (
+                   <div key={i} style={{ 
+                     width: '30px', 
+                     height: `${activeFeature==='precipitation'?Math.min((activeData.rainVolume[i]/maxRain)*100,100):activeData.aqiHeights[i]}%`, 
+                     backgroundColor: activeFeature==='precipitation'?'#00B4D8':activeData.aqiColors[i], 
+                     borderRadius: '6px 6px 0 0',
+                     position: 'relative'
+                   }}>
+                     {/* Show numerical AQI value above the bar on hover (Optional feature) */}
+                     {activeFeature === 'air-quality' && (
+                        <span style={{ position: 'absolute', top: '-20px', left: '50%', transform: 'translateX(-50%)', fontSize: '10px', opacity: 0.8 }}>
+                          {activeData.aqiValues[i]}
+                        </span>
+                     )}
+                   </div>
+                 ))}
+               </div>
+            )}
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', opacity: 0.7, position: 'absolute', bottom: '-25px', left: 0, right: 0 }}>
+              {activeData.times.map((t, idx) => <span key={idx}>{t}</span>)}
             </div>
           </div>
         </div>
-
       </div>
-    </>
+    </div>
   );
 }
