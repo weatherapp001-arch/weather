@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import emailjs from '@emailjs/browser';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const AlertPanel = ({ searchQuery }) => {
   const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
   const REPO_OWNER = import.meta.env.VITE_GITHUB_REPO_OWNER;
   const REPO_NAME = import.meta.env.VITE_GITHUB_REPO_NAME;
   const WEATHER_KEY = import.meta.env.VITE_WEATHER_API_KEY;
+  const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
   const [contactsList, setContactsList] = useState([]);
   const [selectedEmails, setSelectedEmails] = useState([]);
   const [newEmail, setNewEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [fileSha, setFileSha] = useState(null);
+  const [dispatchMode, setDispatchMode] = useState('email');
+
+  // SECURITY: Check if running on your computer (local) or Internet (production)
+  const isLocalDev = import.meta.env.MODE === 'development';
 
   let rawCity = "Prayagraj";
   if (typeof searchQuery === 'string' && searchQuery.trim() !== '') {
@@ -26,19 +32,27 @@ const AlertPanel = ({ searchQuery }) => {
   const [formData, setFormData] = useState({
     city: currentCity,
     threat: "Initializing...",
+    time: "--",
     temp: "--",
     condition: "Waiting...",
-    advice: "Click 'Update' to fetch the latest environmental data."
+    advice: "Click 'Update' to fetch the latest predictive data."
   });
 
   const handleFormChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  // --- NEW: Select All Logic ---
+  const toggleSelectAll = () => {
+    if (selectedEmails.length === contactsList.length && contactsList.length > 0) {
+      setSelectedEmails([]); // Deselect all
+    } else {
+      setSelectedEmails([...contactsList]); // Select all
+    }
+  };
+
+  // --- GitHub Database Functions ---
   const fetchContacts = useCallback(async () => {
     if (!GITHUB_TOKEN || GITHUB_TOKEN.includes("actual_token")) return;
     try {
@@ -58,132 +72,98 @@ const AlertPanel = ({ searchQuery }) => {
     setLoading(true);
     try {
       const updatedContent = btoa(JSON.stringify(contactsList, null, 2));
-      
       const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/contacts.json`, {
         method: 'PUT',
         headers: {
           Authorization: `token ${GITHUB_TOKEN}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          message: "Updated contacts via Dashboard",
-          content: updatedContent,
-          sha: fileSha 
-        })
+        body: JSON.stringify({ message: "Updated contacts", content: updatedContent, sha: fileSha })
       });
-
       if (res.ok) {
         const data = await res.json();
         setFileSha(data.content.sha); 
         alert("✅ Contacts successfully saved to GitHub!");
-      } else {
-        throw new Error("Failed to push to GitHub");
       }
-    } catch (err) {
-      console.error("Save Error:", err);
-      alert("❌ Failed to save. Check your GitHub Token permissions.");
-    } finally {
-      setLoading(false);
+    } catch (err) { alert("❌ Failed to save."); } finally { setLoading(false); }
+  };
+
+  const generateAIAlert = async (futureWeather) => {
+    try {
+      const genAI = new GoogleGenerativeAI(GEMINI_KEY);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+      const prompt = `
+        You are a Predictive Safety Officer at UIT Naini. 
+        Forecast for ${futureWeather.city} at ${futureWeather.time}: ${futureWeather.temp}°C, ${futureWeather.condition}.
+        Task: Create a 3-word threat title and a 3-sentence advice including practical safety tips (car for lightning, AC for heat) and a Java metaphor.
+        Format response as JSON: {"threat": "...", "advice": "..."}
+      `;
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const cleanText = response.text().replace(/```json/gi, '').replace(/```/gi, '').trim();
+      return JSON.parse(cleanText);
+    } catch (error) {
+      return { threat: "Manual Override", advice: "Check campus protocols." };
     }
   };
 
   const fetchEnvironmentalData = useCallback(async (targetCity, fullQuery) => {
-    if (!targetCity || !WEATHER_KEY) return;
+    if (!targetCity || !WEATHER_KEY || !GEMINI_KEY) return;
     setLoading(true);
-    
     try {
       let wRes;
-      if (fullQuery && fullQuery.lat && fullQuery.lon) {
-        wRes = await fetch(`https://api.openweathermap.org/data/2.5/weather?lat=${fullQuery.lat}&lon=${fullQuery.lon}&units=metric&appid=${WEATHER_KEY}`);
+      if (fullQuery?.lat) {
+        wRes = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${fullQuery.lat}&lon=${fullQuery.lon}&units=metric&appid=${WEATHER_KEY}`);
       } else {
-        let cityToSearch = targetCity.split(',')[0].trim();
-        if (cityToSearch.toLowerCase() === 'prayagraj') cityToSearch = 'Allahabad'; 
-        
-        const cityEncoded = encodeURIComponent(cityToSearch);
-        wRes = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=${cityEncoded}&units=metric&appid=${WEATHER_KEY}`);
+        wRes = await fetch(`https://api.openweathermap.org/data/2.5/forecast?q=${targetCity}&units=metric&appid=${WEATHER_KEY}`);
       }
-      
       const wData = await wRes.json();
-      if (wData.cod !== 200) throw new Error("Sync Failed");
-
-      const { lat, lon } = wData.coord;
-      const aRes = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution?lat=${lat}&lon=${lon}&appid=${WEATHER_KEY}`);
-      const aData = await aRes.json();
-
-      const temp = Math.round(wData.main.temp);
-      const cond = wData.weather[0].main;
-      const aqi = aData.list[0].main.aqi; 
-
-      let threat = "Atmospheric Stability";
-      let advice = "No immediate environmental hazards detected. Conditions are safe.";
-
-      if (aqi >= 150) {
-        threat = "Hazardous Air Quality";
-        advice = `AQI Level ${aqi}: Dangerous pollution detected. Please wear an N95 mask and stay indoors.`;
-      } else if (temp > 40) {
-        threat = "Extreme Heatwave";
-        advice = "High thermal stress. Stay hydrated and avoid outdoor activity between 12 PM - 4 PM.";
-      } else if (cond.includes("Rain") || cond.includes("Thunder")) {
-        threat = "Severe Weather Alert";
-        advice = "Precipitation detected. Carry protective gear and avoid waterlogged routes.";
-      }
-
-      setFormData({
-        city: targetCity,
-        temp: `${temp}°C`,
-        condition: cond,
-        threat: threat,
-        advice: advice
-      });
-    } catch (err) {
-      setFormData(prev => ({ 
-        ...prev, 
-        city: targetCity, 
-        threat: "Sync Interrupted", 
-        condition: "Failed", 
-        advice: "Connection failed. Please click the 'Update' button to try again." 
-      }));
-    } finally { setLoading(false); }
-  }, [WEATHER_KEY]);
+      const next = wData.list[0];
+      const forecastTime = new Date(next.dt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const aiRes = await generateAIAlert({ city: targetCity, temp: Math.round(next.main.temp), condition: next.weather[0].main, time: forecastTime });
+      setFormData({ city: targetCity, time: forecastTime, temp: `${Math.round(next.main.temp)}°C`, condition: next.weather[0].main, threat: aiRes.threat, advice: aiRes.advice });
+    } catch (err) { console.error(err); } finally { setLoading(false); }
+  }, [WEATHER_KEY, GEMINI_KEY]);
 
   useEffect(() => {
     fetchContacts();
     fetchEnvironmentalData(currentCity, searchQuery);
   }, [currentCity, searchQuery, fetchContacts, fetchEnvironmentalData]);
 
-  const sendSafetyAlert = (e) => {
+  const triggerWebPush = () => {
+    if (Notification.permission === "granted") {
+      navigator.serviceWorker.ready.then((reg) => {
+        reg.showNotification(`🚨 AREA ALERT: ${formData.threat}`, {
+          body: `Arriving @ ${formData.time}: ${formData.advice}`,
+          icon: "/favicon.svg",
+          requireInteraction: true,
+          tag: "emergency",
+          actions: [{ action: 'ack', title: 'Acknowledge' }]
+        });
+      });
+      alert("📡 Broadcast Deployed.");
+    }
+  };
+
+  const handleDispatch = (e) => {
     e.preventDefault();
-    if (selectedEmails.length === 0) return alert("⚠️ Select a recipient first.");
-
-    const cleanParams = {
-      to_emails: selectedEmails.join(","),
-      name: "Aryan Sahu",
-      city: formData.city.replace(/\+/g, ' '),
-      threat: formData.threat.replace(/\+/g, ' '),
-      temp: formData.temp,
-      condition: formData.condition.replace(/\+/g, ' '),
-      advice: formData.advice.replace(/\+/g, ' ')
-    };
-
-    emailjs.send(
-      import.meta.env.VITE_EMAILJS_SERVICE_ID,
-      import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
-      cleanParams,
-      import.meta.env.VITE_EMAILJS_PUBLIC_KEY
-    ).then(() => alert(`✅ Alert for ${formData.city} sent successfully!`))
-     .catch(() => alert("❌ Dispatch failed. Check console."));
+    if (dispatchMode === 'broadcast') {
+      triggerWebPush();
+    } else {
+      if (selectedEmails.length === 0) return alert("⚠️ Select a recipient.");
+      emailjs.send(
+        import.meta.env.VITE_EMAILJS_SERVICE_ID,
+        import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
+        { to_emails: selectedEmails.join(","), threat: formData.threat, advice: formData.advice, city: formData.city, temp: formData.temp },
+        import.meta.env.VITE_EMAILJS_PUBLIC_KEY
+      ).then(() => alert("✅ Email Sent!"));
+    }
   };
 
   return (
     <div className="alert-view-container hide-scroll" style={viewportStyle}>
       <div className="glass-card" style={cardStyle}>
-        
-        {loading && (
-          <div style={loaderOverlayStyle}>
-             <span className="material-symbols-outlined" style={{ fontSize: '48px', animation: 'spin 2s linear infinite' }}>sync</span>
-             <p style={{marginTop: '10px'}}>Synchronizing Data...</p>
-          </div>
-        )}
+        {loading && <div style={loaderOverlayStyle}>Syncing Predictive Data...</div>}
 
         <div style={headerContainerStyle}>
           <h2 style={headerStyle}>
@@ -192,74 +172,65 @@ const AlertPanel = ({ searchQuery }) => {
           </h2>
         </div>
 
-        <form onSubmit={sendSafetyAlert} style={formStyle}>
-          
+        <form onSubmit={handleDispatch} style={formStyle}>
           <div style={innerSectionStyle}>
             <div style={sectionTopRowStyle}>
-              <h4 style={labelStyle}>
-                <span className="material-symbols-outlined">group</span> 1. Recipients
-              </h4>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" onClick={fetchContacts} style={syncBtnStyle} title="Reload Contacts">
-                   <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>cloud_download</span> Pull
-                </button>
-                <button type="button" onClick={saveContactsToGitHub} style={saveBtnStyle} title="Save to GitHub">
-                   <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>cloud_upload</span> Push
-                </button>
+              <h4 style={labelStyle}>1. Recipients</h4>
+              <div style={toggleContainerStyle}>
+                <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>Email Mode</button>
+                {/* BROADCAST ONLY VISIBLE ON YOUR COMPUTER */}
+                {isLocalDev && (
+                  <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>Admin Broadcast</button>
+                )}
               </div>
             </div>
             
-            <div className="hide-scroll" style={scrollContainer}>
-              {contactsList.map(email => (
-                <label key={email} style={contactItemStyle}>
-                  <input type="checkbox" onChange={(e) => setSelectedEmails(prev => e.target.checked ? [...prev, email] : prev.filter(i => i !== email))} />
-                  {email}
-                </label>
-              ))}
-            </div>
-
-            <div style={inputContainerStyle}>
-              <input type="email" placeholder="New email..." value={newEmail} onChange={e => setNewEmail(e.target.value)} style={inputStyle} />
-              <button type="button" onClick={() => { if(newEmail) { setContactsList([...contactsList, newEmail]); setNewEmail(""); } }} style={addBtnStyle}>Add</button>
-            </div>
+            {dispatchMode === 'email' ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                  {/* NEW SELECT ALL BUTTON */}
+                  <button type="button" onClick={toggleSelectAll} style={syncBtnStyle}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
+                      {selectedEmails.length === contactsList.length ? 'deselect' : 'select_all'}
+                    </span>
+                    {selectedEmails.length === contactsList.length ? ' Deselect' : ' Select All'}
+                  </button>
+                  <div style={{ display: 'flex', gap: '5px' }}>
+                    <button type="button" onClick={fetchContacts} style={syncBtnStyle}>Pull</button>
+                    <button type="button" onClick={saveContactsToGitHub} style={saveBtnStyle}>Push</button>
+                  </div>
+                </div>
+                <div className="hide-scroll" style={scrollContainer}>
+                  {contactsList.map(email => (
+                    <label key={email} style={contactItemStyle}>
+                      <input 
+                        type="checkbox" 
+                        checked={selectedEmails.includes(email)}
+                        onChange={(e) => setSelectedEmails(e.target.checked ? [...selectedEmails, email] : selectedEmails.filter(i => i !== email))} 
+                      />
+                      {email}
+                    </label>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div style={broadcastNoticeStyle}>Area-Wide Broadcast Enabled (Admin Only)</div>
+            )}
           </div>
 
           <div style={innerSectionStyle}>
-            <div style={sectionTopRowStyle}>
-              <h4 style={labelStyle}>
-                <span className="material-symbols-outlined">analytics</span> 2. Automated Variables
-              </h4>
-              <button type="button" onClick={() => fetchEnvironmentalData(currentCity, searchQuery)} style={syncBtnStyle} title="Force Refresh Data">
-                <span className="material-symbols-outlined" style={{ fontSize: '13px', animation: loading ? 'spin 1s linear infinite' : 'none' }}>refresh</span> Update
-              </button>
-            </div>
-
+            <h4 style={labelStyle}>2. Predictive Data</h4>
             <div style={variableGrid}>
-              <div style={inputGroupStyle}>
-                <span className="material-symbols-outlined" style={iconInsideStyle}>location_on</span>
-                <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} />
-              </div>
-              <div style={inputGroupStyle}>
-                <span className="material-symbols-outlined" style={iconInsideStyle}>warning</span>
-                <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} />
-              </div>
-              <div style={inputGroupStyle}>
-                <span className="material-symbols-outlined" style={iconInsideStyle}>thermostat</span>
-                <input name="temp" value={formData.temp} onChange={handleFormChange} style={editableInputStyle} />
-              </div>
-              <div style={inputGroupStyle}>
-                <span className="material-symbols-outlined" style={iconInsideStyle}>cloud</span>
-                <input name="condition" value={formData.condition} onChange={handleFormChange} style={editableInputStyle} />
-              </div>
-              <div style={textareaGroupStyle}>
-                <span className="material-symbols-outlined" style={iconInsideTextareaStyle}>health_and_safety</span>
-                <textarea name="advice" value={formData.advice} onChange={handleFormChange} style={editableTextareaStyle} rows="2" />
-              </div>
+              <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} />
+              <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} />
+              <input name="temp" value={formData.temp} onChange={handleFormChange} style={editableInputStyle} />
+              <input name="condition" value={formData.condition} onChange={handleFormChange} style={editableInputStyle} />
+              <textarea name="advice" value={formData.advice} onChange={handleFormChange} style={editableTextareaStyle} />
             </div>
           </div>
 
           <button type="submit" style={dispatchBtnStyle}>
-            Dispatch Alert Now
+            {dispatchMode === 'email' ? `Email Alert (${selectedEmails.length})` : 'Broadcast Area Alert'}
           </button>
         </form>
       </div>
@@ -267,228 +238,190 @@ const AlertPanel = ({ searchQuery }) => {
   );
 };
 
-// --- MULTI-LINE STYLES (Standard Format) ---
+// --- STYLES ---
 
-const viewportStyle = { 
-  height: '100%', 
-  width: '100%', 
-  display: 'flex', 
-  justifyContent: 'center', 
-  alignItems: 'flex-start', 
-  overflowY: 'auto', 
-  padding: '20px 0',
-  paddingBottom: '60px' 
-};
-
-const cardStyle = { 
-  width: '90%', 
-  maxWidth: '600px', 
-  padding: '25px', 
-  borderRadius: '20px', 
-  background: 'rgba(255,255,255,0.05)', 
-  backdropFilter: 'blur(15px)', 
-  border: '1px solid rgba(255,255,255,0.1)', 
-  position: 'relative',
-  marginBottom: '30px' 
-};
-
-const headerContainerStyle = { 
-  borderBottom: '1px solid rgba(255,255,255,0.1)', 
-  paddingBottom: '15px', 
-  marginBottom: '20px' 
-};
-
-const headerStyle = { 
-  display: 'flex', 
-  alignItems: 'center', 
-  gap: '12px', 
-  color: '#ff4d4d', 
-  margin: 0 
-};
-
-const formStyle = { 
-  display: 'flex', 
-  flexDirection: 'column', 
-  gap: '15px' 
-};
-
-const innerSectionStyle = { 
-  background: 'rgba(0,0,0,0.2)', 
-  padding: '15px', 
-  borderRadius: '12px', 
-  border: '1px solid rgba(255,255,255,0.05)' 
-};
-
-const sectionTopRowStyle = { 
-  display: 'flex', 
-  justifyContent: 'space-between', 
-  alignItems: 'center', 
-  marginBottom: '10px' 
-};
-
-const labelStyle = { 
-  margin: 0, 
-  fontSize: '16px', 
-  display: 'flex', 
-  alignItems: 'center', 
-  gap: '8px', 
-  opacity: 0.8 
-};
-
-const scrollContainer = { 
-  maxHeight: '100px', 
-  overflowY: 'auto', 
-  display: 'flex', 
-  flexDirection: 'column', 
-  gap: '6px' 
-};
-
-const variableGrid = { 
-  display: 'grid', 
-  gridTemplateColumns: '1fr 1fr', 
-  gap: '10px' 
-};
-
-const inputGroupStyle = {
-  position: 'relative',
+const viewportStyle = {
+  height: '100%',
+  width: '100%',
   display: 'flex',
-  alignItems: 'center'
+  justifyContent: 'center',
+  padding: '20px 0'
 };
 
-const iconInsideStyle = {
-  position: 'absolute',
-  left: '10px',
-  color: 'rgba(255,255,255,0.7)',
-  pointerEvents: 'none',
-  fontSize: '18px'
+const cardStyle = {
+  width: '90%',
+  maxWidth: '600px',
+  padding: '25px',
+  borderRadius: '20px',
+  background: 'rgba(255,255,255,0.05)',
+  backdropFilter: 'blur(15px)',
+  border: '1px solid rgba(255,255,255,0.1)'
+};
+
+const headerContainerStyle = {
+  borderBottom: '1px solid rgba(255,255,255,0.1)',
+  paddingBottom: '15px',
+  marginBottom: '20px'
+};
+
+const headerStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  color: '#ff4d4d',
+  margin: 0
+};
+
+const formStyle = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '15px'
+};
+
+const innerSectionStyle = {
+  background: 'rgba(0,0,0,0.2)',
+  padding: '15px',
+  borderRadius: '12px'
+};
+
+const sectionTopRowStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  marginBottom: '10px'
+};
+
+const labelStyle = {
+  margin: 0,
+  fontSize: '16px',
+  opacity: 0.8
+};
+
+const toggleContainerStyle = {
+  display: 'flex',
+  background: 'rgba(0,0,0,0.4)',
+  padding: '4px',
+  borderRadius: '8px'
+};
+
+const activeToggleStyle = {
+  background: '#ff4d4d',
+  color: 'white',
+  border: 'none',
+  padding: '6px 12px',
+  borderRadius: '5px',
+  fontSize: '12px',
+  cursor: 'pointer'
+};
+
+const inactiveToggleStyle = {
+  background: 'transparent',
+  color: 'rgba(255,255,255,0.6)',
+  border: 'none',
+  padding: '6px 12px',
+  borderRadius: '5px',
+  fontSize: '12px',
+  cursor: 'pointer'
+};
+
+const scrollContainer = {
+  maxHeight: '120px',
+  overflowY: 'auto',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: '6px'
+};
+
+const variableGrid = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: '10px'
 };
 
 const editableInputStyle = {
   width: '100%',
   background: 'rgba(255,255,255,0.05)',
   border: '1px solid rgba(255,255,255,0.2)',
-  padding: '10px 10px 10px 35px',
+  padding: '10px',
   borderRadius: '8px',
   color: 'white',
-  fontSize: '13px',
-  outline: 'none',
-  transition: 'border-color 0.2s'
-};
-
-const textareaGroupStyle = {
-  position: 'relative',
-  display: 'flex',
-  gridColumn: '1 / -1'
-};
-
-const iconInsideTextareaStyle = {
-  position: 'absolute',
-  left: '10px',
-  top: '12px',
-  color: 'rgba(255,255,255,0.7)',
-  pointerEvents: 'none',
-  fontSize: '18px'
+  fontSize: '13px'
 };
 
 const editableTextareaStyle = {
+  gridColumn: '1 / -1',
   width: '100%',
   background: 'rgba(255,255,255,0.05)',
   border: '1px solid rgba(255,255,255,0.2)',
-  padding: '10px 10px 10px 35px',
+  padding: '10px',
   borderRadius: '8px',
   color: 'white',
   fontSize: '13px',
-  outline: 'none',
-  resize: 'vertical',
-  fontFamily: 'inherit',
   minHeight: '60px'
 };
 
-const inputContainerStyle = { 
-  display: 'flex', 
-  gap: '10px', 
-  marginTop: '10px' 
+const syncBtnStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  background: 'transparent',
+  border: '1px solid #A3E4D7',
+  color: '#A3E4D7',
+  padding: '4px 10px',
+  borderRadius: '5px',
+  fontSize: '12px',
+  cursor: 'pointer'
 };
 
-const inputStyle = { 
-  flex: 1, 
-  background: 'rgba(255,255,255,0.05)', 
-  border: '1px solid rgba(255,255,255,0.1)', 
-  padding: '8px', 
-  borderRadius: '6px', 
-  color: 'white' 
+const saveBtnStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  background: '#A3E4D7',
+  color: 'black',
+  padding: '4px 10px',
+  borderRadius: '5px',
+  fontSize: '12px',
+  cursor: 'pointer',
+  fontWeight: 'bold'
 };
 
-const addBtnStyle = { 
-  padding: '0 15px', 
-  background: '#A3E4D7', 
-  border: 'none', 
-  borderRadius: '6px', 
-  fontWeight: 'bold', 
-  cursor: 'pointer', 
-  color: 'black' 
+const dispatchBtnStyle = {
+  padding: '15px',
+  background: '#ff4d4d',
+  color: 'white',
+  border: 'none',
+  borderRadius: '10px',
+  fontWeight: 'bold',
+  cursor: 'pointer',
+  fontSize: '16px'
 };
 
-const syncBtnStyle = { 
-  display: 'flex', 
-  alignItems: 'center', 
-  gap: '4px', 
-  background: 'transparent', 
-  border: '1px solid #A3E4D7', 
-  color: '#A3E4D7', 
-  padding: '4px 10px', 
-  borderRadius: '5px', 
-  fontSize: '12px', 
-  cursor: 'pointer' 
+const contactItemStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  fontSize: '13px',
+  padding: '4px'
 };
 
-const saveBtnStyle = { 
-  display: 'flex', 
-  alignItems: 'center', 
-  gap: '4px', 
-  background: '#A3E4D7', 
-  border: '1px solid #A3E4D7', 
-  color: 'black', 
-  padding: '4px 10px', 
-  borderRadius: '5px', 
-  fontSize: '12px', 
-  cursor: 'pointer', 
-  fontWeight: 'bold' 
+const loaderOverlayStyle = {
+  position: 'absolute',
+  inset: 0,
+  background: 'rgba(0,0,0,0.8)',
+  zIndex: 10,
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'center',
+  borderRadius: '20px',
+  color: '#A3E4D7'
 };
 
-const dispatchBtnStyle = { 
-  padding: '15px', 
-  background: '#ff4d4d', 
-  color: 'white', 
-  border: 'none', 
-  borderRadius: '10px', 
-  fontWeight: 'bold', 
-  cursor: 'pointer', 
-  fontSize: '16px', 
-  marginTop: '10px' 
+const broadcastNoticeStyle = {
+  textAlign: 'center',
+  padding: '20px',
+  background: 'rgba(255,77,77,0.05)',
+  borderRadius: '8px',
+  border: '1px dashed #ff4d4d'
 };
-
-const contactItemStyle = { 
-  display: 'flex', 
-  alignItems: 'center', 
-  gap: '10px', 
-  fontSize: '13px', 
-  padding: '4px', 
-  cursor: 'pointer' 
-};
-
-const loaderOverlayStyle = { 
-  position: 'absolute', 
-  inset: 0, 
-  background: 'rgba(0,0,0,0.85)', 
-  zIndex: 10, 
-  display: 'flex', 
-  flexDirection: 'column', 
-  justifyContent: 'center', 
-  alignItems: 'center', 
-  borderRadius: '20px', 
-  color: '#A3E4D7', 
-  fontWeight: 'bold' 
-};
-
 export default AlertPanel;
