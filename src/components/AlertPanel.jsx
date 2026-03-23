@@ -14,8 +14,7 @@ const AlertPanel = ({ searchQuery }) => {
   const [newEmail, setNewEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [fileSha, setFileSha] = useState(null);
-  
-  const [dispatchMode, setDispatchMode] = useState('email'); 
+  const [dispatchMode, setDispatchMode] = useState('email');
 
   const isLocalDev = import.meta.env.MODE === 'development';
 
@@ -292,6 +291,7 @@ const AlertPanel = ({ searchQuery }) => {
               <h4 style={labelStyle}>
                 <span className="material-symbols-outlined">analytics</span> 2. Predictive Data
               </h4>
+              {/* THE RESTORED UPDATE BUTTON */}
               <button type="button" onClick={() => fetchEnvironmentalData(currentCity, searchQuery)} style={syncBtnStyle} title="Force Refresh Data">
                 <span className="material-symbols-outlined" style={{ fontSize: '13px', animation: loading ? 'spin 1s linear infinite' : 'none' }}>refresh</span> Update
               </button>
@@ -338,25 +338,24 @@ const viewportStyle = {
   justifyContent: 'center',
   alignItems: 'flex-start',
   overflowY: 'auto',
-  overflowX: 'hidden', 
-  padding: '20px 10px', 
+  overflowX: 'hidden', // Forces horizontal scroll to hide
+  padding: '20px 10px', // Shrinks padding for better mobile fit
   paddingBottom: '60px',
-  boxSizing: 'border-box' 
+  boxSizing: 'border-box' // CRITICAL: Fixes the side overflow
 };
 
 const cardStyle = {
-  width: '100%', 
+  width: '100%', // Use 100% of the available space up to maxWidth
   maxWidth: '600px',
-  padding: '20px', // Slightly reduced padding for mobile safety
+  padding: '25px',
   borderRadius: '20px',
   background: 'rgba(255,255,255,0.05)',
   backdropFilter: 'blur(15px)',
   border: '1px solid rgba(255,255,255,0.1)',
   position: 'relative',
   marginBottom: '30px',
-  boxSizing: 'border-box', 
-  margin: '0 auto', 
-  overflow: 'hidden' // Force content to stay inside card
+  boxSizing: 'border-box', // CRITICAL: Keeps padding inside the width
+  margin: '0 auto' // Centers the card
 };
 
 const headerContainerStyle = {
@@ -376,8 +375,7 @@ const headerStyle = {
 const formStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '15px',
-  width: '100%'
+  gap: '15px'
 };
 
 const innerSectionStyle = {
@@ -385,9 +383,7 @@ const innerSectionStyle = {
   padding: '15px',
   borderRadius: '12px',
   border: '1px solid rgba(255,255,255,0.05)',
-  boxSizing: 'border-box',
-  width: '100%', // Ensures it doesn't push past card
-  overflow: 'hidden' // Trims anything trying to escape
+  boxSizing: 'border-box'
 };
 
 const sectionTopRowStyle = {
@@ -455,20 +451,16 @@ const scrollContainer = {
 
 const variableGrid = {
   display: 'grid',
-  // CRITICAL FIX: This makes the grid responsive. It will be 2 columns on desktop, 1 column on mobile.
-  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-  gap: '10px',
-  width: '100%',
-  boxSizing: 'border-box'
+  gridTemplateColumns: '1fr 1fr',
+  gap: '10px'
 };
 
+// THE RESTORED INPUT WRAPPER
 const inputGroupStyle = {
   position: 'relative',
   display: 'flex',
   alignItems: 'center',
-  width: '100%',
-  minWidth: 0, // CRITICAL FIX: Stops CSS grid from blowing out width
-  boxSizing: 'border-box'
+  width: '100%'
 };
 
 const iconInsideStyle = {
@@ -495,8 +487,7 @@ const textareaGroupStyle = {
   position: 'relative',
   display: 'flex',
   gridColumn: '1 / -1',
-  width: '100%',
-  boxSizing: 'border-box'
+  width: '100%'
 };
 
 const iconInsideTextareaStyle = {
@@ -525,14 +516,11 @@ const editableTextareaStyle = {
 const inputContainerStyle = {
   display: 'flex',
   gap: '10px',
-  marginTop: '10px',
-  width: '100%',
-  boxSizing: 'border-box'
+  marginTop: '10px'
 };
 
 const inputStyle = {
   flex: 1,
-  minWidth: 0, // CRITICAL FIX: Prevents email input from pushing "Add" button out
   background: 'rgba(255,255,255,0.05)',
   border: '1px solid rgba(255,255,255,0.1)',
   padding: '8px',
