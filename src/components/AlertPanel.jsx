@@ -14,9 +14,9 @@ const AlertPanel = ({ searchQuery }) => {
   const [newEmail, setNewEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [fileSha, setFileSha] = useState(null);
-  const [dispatchMode, setDispatchMode] = useState('email');
+  
+  const [dispatchMode, setDispatchMode] = useState('email'); 
 
-  // SECURITY: Check if running on your computer (local) or Internet (production)
   const isLocalDev = import.meta.env.MODE === 'development';
 
   let rawCity = "Prayagraj";
@@ -43,16 +43,14 @@ const AlertPanel = ({ searchQuery }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  // --- NEW: Select All Logic ---
   const toggleSelectAll = () => {
     if (selectedEmails.length === contactsList.length && contactsList.length > 0) {
-      setSelectedEmails([]); // Deselect all
+      setSelectedEmails([]);
     } else {
-      setSelectedEmails([...contactsList]); // Select all
+      setSelectedEmails([...contactsList]);
     }
   };
 
-  // --- GitHub Database Functions ---
   const fetchContacts = useCallback(async () => {
     if (!GITHUB_TOKEN || GITHUB_TOKEN.includes("actual_token")) return;
     try {
@@ -78,51 +76,78 @@ const AlertPanel = ({ searchQuery }) => {
           Authorization: `token ${GITHUB_TOKEN}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ message: "Updated contacts", content: updatedContent, sha: fileSha })
+        body: JSON.stringify({ message: "Updated contacts via Dashboard", content: updatedContent, sha: fileSha })
       });
+
       if (res.ok) {
         const data = await res.json();
         setFileSha(data.content.sha); 
         alert("✅ Contacts successfully saved to GitHub!");
-      }
-    } catch (err) { alert("❌ Failed to save."); } finally { setLoading(false); }
+      } else throw new Error("Failed to push to GitHub");
+    } catch (err) {
+      alert("❌ Failed to save. Check your GitHub Token permissions.");
+    } finally { setLoading(false); }
   };
 
   const generateAIAlert = async (futureWeather) => {
     try {
       const genAI = new GoogleGenerativeAI(GEMINI_KEY);
       const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+
       const prompt = `
         You are a Predictive Safety Officer at UIT Naini. 
-        Forecast for ${futureWeather.city} at ${futureWeather.time}: ${futureWeather.temp}°C, ${futureWeather.condition}.
-        Task: Create a 3-word threat title and a 3-sentence advice including practical safety tips (car for lightning, AC for heat) and a Java metaphor.
-        Format response as JSON: {"threat": "...", "advice": "..."}
+        Forecast for ${futureWeather.city} arriving at exactly ${futureWeather.time}: 
+        Temperature: ${futureWeather.temp}°C, Condition: ${futureWeather.condition}.
+        
+        The audience is a 4th-semester B.Tech Computer Science student.
+        Task: 
+        1. Create a 3-word "Threat Level" title.
+        2. Create a 3-sentence "Predictive Safety Advice" following these strict rules:
+           - Sentence 1: Explicitly state the arrival time (${futureWeather.time}) and the impending weather threat.
+           - Sentence 2: Provide specific, practical physical safety advice based on the condition (e.g., if thunderstorm/lightning, advise to stay in a car and away from trees; if extreme heat, advise indoor AC; if rain, avoid waterlogged areas).
+           - Sentence 3: Conclude with a clever Java or Coding metaphor to keep the CS student engaged.
+        Format your response strictly as a JSON object: {"threat": "...", "advice": "..."}
       `;
+
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const cleanText = response.text().replace(/```json/gi, '').replace(/```/gi, '').trim();
       return JSON.parse(cleanText);
     } catch (error) {
-      return { threat: "Manual Override", advice: "Check campus protocols." };
+      return { threat: "Manual Override Required", advice: "Unable to reach AI prediction servers. Follow standard campus safety protocols." };
     }
   };
 
   const fetchEnvironmentalData = useCallback(async (targetCity, fullQuery) => {
     if (!targetCity || !WEATHER_KEY || !GEMINI_KEY) return;
     setLoading(true);
+    
     try {
       let wRes;
-      if (fullQuery?.lat) {
+      if (fullQuery && fullQuery.lat && fullQuery.lon) {
         wRes = await fetch(`https://api.openweathermap.org/data/2.5/forecast?lat=${fullQuery.lat}&lon=${fullQuery.lon}&units=metric&appid=${WEATHER_KEY}`);
       } else {
-        wRes = await fetch(`https://api.openweathermap.org/data/2.5/forecast?q=${targetCity}&units=metric&appid=${WEATHER_KEY}`);
+        let cityToSearch = targetCity.split(',')[0].trim();
+        if (cityToSearch.toLowerCase() === 'prayagraj') cityToSearch = 'Allahabad'; 
+        const cityEncoded = encodeURIComponent(cityToSearch);
+        wRes = await fetch(`https://api.openweathermap.org/data/2.5/forecast?q=${cityEncoded}&units=metric&appid=${WEATHER_KEY}`);
       }
+      
       const wData = await wRes.json();
-      const next = wData.list[0];
-      const forecastTime = new Date(next.dt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const aiRes = await generateAIAlert({ city: targetCity, temp: Math.round(next.main.temp), condition: next.weather[0].main, time: forecastTime });
-      setFormData({ city: targetCity, time: forecastTime, temp: `${Math.round(next.main.temp)}°C`, condition: next.weather[0].main, threat: aiRes.threat, advice: aiRes.advice });
-    } catch (err) { console.error(err); } finally { setLoading(false); }
+      if (wData.cod !== "200") throw new Error("Sync Failed");
+
+      const nextForecast = wData.list[0];
+      const temp = Math.round(nextForecast.main.temp);
+      const cond = nextForecast.weather[0].main;
+      const forecastTime = new Date(nextForecast.dt * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      const futureMetrics = { city: targetCity, temp: temp, condition: cond, time: forecastTime };
+      const aiResponse = await generateAIAlert(futureMetrics);
+
+      setFormData({ city: targetCity, time: forecastTime, temp: `${temp}°C`, condition: cond, threat: aiResponse.threat, advice: aiResponse.advice });
+    } catch (err) {
+      setFormData(prev => ({ ...prev, city: targetCity, threat: "Sync Interrupted", condition: "Failed", advice: "Connection failed." }));
+    } finally { setLoading(false); }
   }, [WEATHER_KEY, GEMINI_KEY]);
 
   useEffect(() => {
@@ -132,55 +157,90 @@ const AlertPanel = ({ searchQuery }) => {
 
   const triggerWebPush = () => {
     if (Notification.permission === "granted") {
-      navigator.serviceWorker.ready.then((reg) => {
-        reg.showNotification(`🚨 AREA ALERT: ${formData.threat}`, {
-          body: `Arriving @ ${formData.time}: ${formData.advice}`,
+      navigator.serviceWorker.ready.then((registration) => {
+        registration.showNotification(`🚨 AREA ALERT: ${formData.threat}`, {
+          body: `Predicted for ${formData.time}: ${formData.advice}`,
           icon: "/favicon.svg",
-          requireInteraction: true,
-          tag: "emergency",
-          actions: [{ action: 'ack', title: 'Acknowledge' }]
+          vibrate: [200, 100, 200, 100, 200],
+          requireInteraction: true, 
+          tag: "emergency-broadcast",
+          actions: [
+            { action: 'acknowledge', title: 'Acknowledge Alert' },
+            { action: 'view', title: 'Open Live Dashboard' }
+          ]
         });
       });
-      alert("📡 Broadcast Deployed.");
+      
+      alert("📡 Sticky Broadcast signal deployed to all active app instances.");
+    } else {
+      alert("⚠️ You must click 'Enable Campus Alerts' first to grant browser permissions.");
     }
   };
 
   const handleDispatch = (e) => {
     e.preventDefault();
+    
     if (dispatchMode === 'broadcast') {
       triggerWebPush();
     } else {
-      if (selectedEmails.length === 0) return alert("⚠️ Select a recipient.");
+      if (selectedEmails.length === 0) return alert("⚠️ Select a recipient first.");
+      const cleanParams = {
+        to_emails: selectedEmails.join(","),
+        name: "Aryan Sahu",
+        city: formData.city.replace(/\+/g, ' '),
+        threat: formData.threat.replace(/\+/g, ' '),
+        temp: formData.temp,
+        condition: formData.condition.replace(/\+/g, ' '),
+        advice: formData.advice.replace(/\+/g, ' ')
+      };
+
       emailjs.send(
         import.meta.env.VITE_EMAILJS_SERVICE_ID,
         import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
-        { to_emails: selectedEmails.join(","), threat: formData.threat, advice: formData.advice, city: formData.city, temp: formData.temp },
+        cleanParams,
         import.meta.env.VITE_EMAILJS_PUBLIC_KEY
-      ).then(() => alert("✅ Email Sent!"));
+      ).then(() => alert(`✅ Email Alert for ${formData.city} sent successfully!`))
+       .catch(() => alert("❌ Email Dispatch failed. Check console."));
     }
   };
 
   return (
     <div className="alert-view-container hide-scroll" style={viewportStyle}>
       <div className="glass-card" style={cardStyle}>
-        {loading && <div style={loaderOverlayStyle}>Syncing Predictive Data...</div>}
+        
+        {loading && (
+          <div style={loaderOverlayStyle}>
+             <span className="material-symbols-outlined" style={{ fontSize: '48px', animation: 'spin 2s linear infinite' }}>sync</span>
+             <p style={{marginTop: '10px'}}>Synchronizing Predictive Data...</p>
+          </div>
+        )}
 
         <div style={headerContainerStyle}>
           <h2 style={headerStyle}>
             <span className="material-symbols-outlined" style={{ fontSize: '36px' }}>emergency_home</span>
             Emergency Dispatch System
           </h2>
+          <p style={{ fontSize: '12px', opacity: 0.7, margin: '5px 0 0 0' }}>
+            Data Source: Bamrauli IMD/OpenWeather | Predictive Engine: Gemini AI
+          </p>
         </div>
 
         <form onSubmit={handleDispatch} style={formStyle}>
+          
           <div style={innerSectionStyle}>
             <div style={sectionTopRowStyle}>
-              <h4 style={labelStyle}>1. Recipients</h4>
+              <h4 style={labelStyle}>
+                <span className="material-symbols-outlined">network_manage</span> 1. Dispatch Mode
+              </h4>
+              
               <div style={toggleContainerStyle}>
-                <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>Email Mode</button>
-                {/* BROADCAST ONLY VISIBLE ON YOUR COMPUTER */}
+                <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>
+                  Private Emails
+                </button>
                 {isLocalDev && (
-                  <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>Admin Broadcast</button>
+                  <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>
+                    Broadcast All
+                  </button>
                 )}
               </div>
             </div>
@@ -188,49 +248,81 @@ const AlertPanel = ({ searchQuery }) => {
             {dispatchMode === 'email' ? (
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                  {/* NEW SELECT ALL BUTTON */}
                   <button type="button" onClick={toggleSelectAll} style={syncBtnStyle}>
                     <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>
                       {selectedEmails.length === contactsList.length ? 'deselect' : 'select_all'}
                     </span>
-                    {selectedEmails.length === contactsList.length ? ' Deselect' : ' Select All'}
+                    {selectedEmails.length === contactsList.length ? ' Deselect All' : ' Select All'}
                   </button>
-                  <div style={{ display: 'flex', gap: '5px' }}>
-                    <button type="button" onClick={fetchContacts} style={syncBtnStyle}>Pull</button>
-                    <button type="button" onClick={saveContactsToGitHub} style={saveBtnStyle}>Push</button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button type="button" onClick={fetchContacts} style={syncBtnStyle} title="Reload Contacts">
+                       <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>cloud_download</span> Pull
+                    </button>
+                    <button type="button" onClick={saveContactsToGitHub} style={saveBtnStyle} title="Save to GitHub">
+                       <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>cloud_upload</span> Push
+                    </button>
                   </div>
                 </div>
                 <div className="hide-scroll" style={scrollContainer}>
                   {contactsList.map(email => (
                     <label key={email} style={contactItemStyle}>
-                      <input 
-                        type="checkbox" 
-                        checked={selectedEmails.includes(email)}
-                        onChange={(e) => setSelectedEmails(e.target.checked ? [...selectedEmails, email] : selectedEmails.filter(i => i !== email))} 
-                      />
+                      <input type="checkbox" checked={selectedEmails.includes(email)} onChange={(e) => setSelectedEmails(prev => e.target.checked ? [...prev, email] : prev.filter(i => i !== email))} />
                       {email}
                     </label>
                   ))}
                 </div>
+                <div style={inputContainerStyle}>
+                  <input type="email" placeholder="New email..." value={newEmail} onChange={e => setNewEmail(e.target.value)} style={inputStyle} />
+                  <button type="button" onClick={() => { if(newEmail) { setContactsList([...contactsList, newEmail]); setNewEmail(""); } }} style={addBtnStyle}>Add</button>
+                </div>
               </>
             ) : (
-              <div style={broadcastNoticeStyle}>Area-Wide Broadcast Enabled (Admin Only)</div>
+              <div style={broadcastNoticeStyle}>
+                <span className="material-symbols-outlined" style={{ fontSize: '36px', color: '#ff4d4d' }}>cell_tower</span>
+                <p style={{ margin: '10px 0 0 0', fontWeight: 'bold', color: '#ff4d4d' }}>Area-Wide Push Notification Active</p>
+                <p style={{ fontSize: '12px', opacity: 0.8, marginTop: '8px', lineHeight: '1.4' }}>
+                  This will trigger a system-level alert to all devices currently connected to the local network or web-app, bypassing the need for phone numbers.
+                </p>
+              </div>
             )}
           </div>
 
           <div style={innerSectionStyle}>
-            <h4 style={labelStyle}>2. Predictive Data</h4>
+            <div style={sectionTopRowStyle}>
+              <h4 style={labelStyle}>
+                <span className="material-symbols-outlined">analytics</span> 2. Predictive Data
+              </h4>
+              <button type="button" onClick={() => fetchEnvironmentalData(currentCity, searchQuery)} style={syncBtnStyle} title="Force Refresh Data">
+                <span className="material-symbols-outlined" style={{ fontSize: '13px', animation: loading ? 'spin 1s linear infinite' : 'none' }}>refresh</span> Update
+              </button>
+            </div>
+
             <div style={variableGrid}>
-              <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} />
-              <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} />
-              <input name="temp" value={formData.temp} onChange={handleFormChange} style={editableInputStyle} />
-              <input name="condition" value={formData.condition} onChange={handleFormChange} style={editableInputStyle} />
-              <textarea name="advice" value={formData.advice} onChange={handleFormChange} style={editableTextareaStyle} />
+              <div style={inputGroupStyle}>
+                <span className="material-symbols-outlined" style={iconInsideStyle}>location_on</span>
+                <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} />
+              </div>
+              <div style={inputGroupStyle}>
+                <span className="material-symbols-outlined" style={iconInsideStyle}>warning</span>
+                <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} />
+              </div>
+              <div style={inputGroupStyle}>
+                <span className="material-symbols-outlined" style={iconInsideStyle}>thermostat</span>
+                <input name="temp" value={formData.temp} onChange={handleFormChange} style={editableInputStyle} />
+              </div>
+              <div style={inputGroupStyle}>
+                <span className="material-symbols-outlined" style={iconInsideStyle}>cloud</span>
+                <input name="condition" value={formData.condition} onChange={handleFormChange} style={editableInputStyle} />
+              </div>
+              <div style={textareaGroupStyle}>
+                <span className="material-symbols-outlined" style={iconInsideTextareaStyle}>health_and_safety</span>
+                <textarea name="advice" value={formData.advice} onChange={handleFormChange} style={editableTextareaStyle} rows="3" />
+              </div>
             </div>
           </div>
 
           <button type="submit" style={dispatchBtnStyle}>
-            {dispatchMode === 'email' ? `Email Alert (${selectedEmails.length})` : 'Broadcast Area Alert'}
+            {dispatchMode === 'email' ? 'Dispatch Private Emails Now' : 'Broadcast to Local Area Now'}
           </button>
         </form>
       </div>
@@ -239,23 +331,32 @@ const AlertPanel = ({ searchQuery }) => {
 };
 
 // --- STYLES ---
-
 const viewportStyle = {
   height: '100%',
   width: '100%',
   display: 'flex',
   justifyContent: 'center',
-  padding: '20px 0'
+  alignItems: 'flex-start',
+  overflowY: 'auto',
+  overflowX: 'hidden', 
+  padding: '20px 10px', 
+  paddingBottom: '60px',
+  boxSizing: 'border-box' 
 };
 
 const cardStyle = {
-  width: '90%',
+  width: '100%', 
   maxWidth: '600px',
-  padding: '25px',
+  padding: '20px', // Slightly reduced padding for mobile safety
   borderRadius: '20px',
   background: 'rgba(255,255,255,0.05)',
   backdropFilter: 'blur(15px)',
-  border: '1px solid rgba(255,255,255,0.1)'
+  border: '1px solid rgba(255,255,255,0.1)',
+  position: 'relative',
+  marginBottom: '30px',
+  boxSizing: 'border-box', 
+  margin: '0 auto', 
+  overflow: 'hidden' // Force content to stay inside card
 };
 
 const headerContainerStyle = {
@@ -275,13 +376,18 @@ const headerStyle = {
 const formStyle = {
   display: 'flex',
   flexDirection: 'column',
-  gap: '15px'
+  gap: '15px',
+  width: '100%'
 };
 
 const innerSectionStyle = {
   background: 'rgba(0,0,0,0.2)',
   padding: '15px',
-  borderRadius: '12px'
+  borderRadius: '12px',
+  border: '1px solid rgba(255,255,255,0.05)',
+  boxSizing: 'border-box',
+  width: '100%', // Ensures it doesn't push past card
+  overflow: 'hidden' // Trims anything trying to escape
 };
 
 const sectionTopRowStyle = {
@@ -294,6 +400,9 @@ const sectionTopRowStyle = {
 const labelStyle = {
   margin: 0,
   fontSize: '16px',
+  display: 'flex',
+  alignItems: 'center',
+  gap: '8px',
   opacity: 0.8
 };
 
@@ -301,7 +410,8 @@ const toggleContainerStyle = {
   display: 'flex',
   background: 'rgba(0,0,0,0.4)',
   padding: '4px',
-  borderRadius: '8px'
+  borderRadius: '8px',
+  gap: '5px'
 };
 
 const activeToggleStyle = {
@@ -311,7 +421,9 @@ const activeToggleStyle = {
   padding: '6px 12px',
   borderRadius: '5px',
   fontSize: '12px',
-  cursor: 'pointer'
+  fontWeight: 'bold',
+  cursor: 'pointer',
+  transition: 'all 0.3s ease'
 };
 
 const inactiveToggleStyle = {
@@ -321,11 +433,20 @@ const inactiveToggleStyle = {
   padding: '6px 12px',
   borderRadius: '5px',
   fontSize: '12px',
-  cursor: 'pointer'
+  cursor: 'pointer',
+  transition: 'all 0.3s ease'
+};
+
+const broadcastNoticeStyle = {
+  textAlign: 'center',
+  padding: '20px',
+  background: 'rgba(255,77,77,0.05)',
+  borderRadius: '8px',
+  border: '1px dashed rgba(255,77,77,0.5)'
 };
 
 const scrollContainer = {
-  maxHeight: '120px',
+  maxHeight: '100px',
   overflowY: 'auto',
   display: 'flex',
   flexDirection: 'column',
@@ -334,30 +455,100 @@ const scrollContainer = {
 
 const variableGrid = {
   display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: '10px'
+  // CRITICAL FIX: This makes the grid responsive. It will be 2 columns on desktop, 1 column on mobile.
+  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+  gap: '10px',
+  width: '100%',
+  boxSizing: 'border-box'
+};
+
+const inputGroupStyle = {
+  position: 'relative',
+  display: 'flex',
+  alignItems: 'center',
+  width: '100%',
+  minWidth: 0, // CRITICAL FIX: Stops CSS grid from blowing out width
+  boxSizing: 'border-box'
+};
+
+const iconInsideStyle = {
+  position: 'absolute',
+  left: '10px',
+  color: 'rgba(255,255,255,0.7)',
+  pointerEvents: 'none',
+  fontSize: '18px'
 };
 
 const editableInputStyle = {
   width: '100%',
   background: 'rgba(255,255,255,0.05)',
   border: '1px solid rgba(255,255,255,0.2)',
-  padding: '10px',
-  borderRadius: '8px',
-  color: 'white',
-  fontSize: '13px'
-};
-
-const editableTextareaStyle = {
-  gridColumn: '1 / -1',
-  width: '100%',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.2)',
-  padding: '10px',
+  padding: '10px 10px 10px 35px',
   borderRadius: '8px',
   color: 'white',
   fontSize: '13px',
-  minHeight: '60px'
+  outline: 'none',
+  boxSizing: 'border-box'
+};
+
+const textareaGroupStyle = {
+  position: 'relative',
+  display: 'flex',
+  gridColumn: '1 / -1',
+  width: '100%',
+  boxSizing: 'border-box'
+};
+
+const iconInsideTextareaStyle = {
+  position: 'absolute',
+  left: '10px',
+  top: '12px',
+  color: 'rgba(255,255,255,0.7)',
+  pointerEvents: 'none',
+  fontSize: '18px'
+};
+
+const editableTextareaStyle = {
+  width: '100%',
+  background: 'rgba(255,255,255,0.05)',
+  border: '1px solid rgba(255,255,255,0.2)',
+  padding: '10px 10px 10px 35px',
+  borderRadius: '8px',
+  color: 'white',
+  fontSize: '13px',
+  outline: 'none',
+  resize: 'vertical',
+  minHeight: '60px',
+  boxSizing: 'border-box'
+};
+
+const inputContainerStyle = {
+  display: 'flex',
+  gap: '10px',
+  marginTop: '10px',
+  width: '100%',
+  boxSizing: 'border-box'
+};
+
+const inputStyle = {
+  flex: 1,
+  minWidth: 0, // CRITICAL FIX: Prevents email input from pushing "Add" button out
+  background: 'rgba(255,255,255,0.05)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  padding: '8px',
+  borderRadius: '6px',
+  color: 'white',
+  boxSizing: 'border-box'
+};
+
+const addBtnStyle = {
+  padding: '0 15px',
+  background: '#A3E4D7',
+  border: 'none',
+  borderRadius: '6px',
+  fontWeight: 'bold',
+  cursor: 'pointer',
+  color: 'black'
 };
 
 const syncBtnStyle = {
@@ -378,6 +569,7 @@ const saveBtnStyle = {
   alignItems: 'center',
   gap: '4px',
   background: '#A3E4D7',
+  border: '1px solid #A3E4D7',
   color: 'black',
   padding: '4px 10px',
   borderRadius: '5px',
@@ -394,7 +586,10 @@ const dispatchBtnStyle = {
   borderRadius: '10px',
   fontWeight: 'bold',
   cursor: 'pointer',
-  fontSize: '16px'
+  fontSize: '16px',
+  marginTop: '10px',
+  width: '100%',
+  boxSizing: 'border-box'
 };
 
 const contactItemStyle = {
@@ -402,26 +597,22 @@ const contactItemStyle = {
   alignItems: 'center',
   gap: '10px',
   fontSize: '13px',
-  padding: '4px'
+  padding: '4px',
+  cursor: 'pointer'
 };
 
 const loaderOverlayStyle = {
   position: 'absolute',
   inset: 0,
-  background: 'rgba(0,0,0,0.8)',
+  background: 'rgba(0,0,0,0.85)',
   zIndex: 10,
   display: 'flex',
+  flexDirection: 'column',
   justifyContent: 'center',
   alignItems: 'center',
   borderRadius: '20px',
-  color: '#A3E4D7'
+  color: '#A3E4D7',
+  fontWeight: 'bold'
 };
 
-const broadcastNoticeStyle = {
-  textAlign: 'center',
-  padding: '20px',
-  background: 'rgba(255,77,77,0.05)',
-  borderRadius: '8px',
-  border: '1px dashed #ff4d4d'
-};
 export default AlertPanel;
