@@ -1,25 +1,29 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import { AuthProvider } from './firebase/auth' // Line 4: Importing your Context Provider
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    {/* Line 11: Wrapping App to provide Global Auth State */}
+    <AuthProvider>
+      <App />
+    </AuthProvider>
   </StrictMode>,
 )
 
-// --- BROADCAST AGENT REGISTRATION ---
-// This block registers the sw.js file located in your public folder
+// --- PWA & EMERGENCY ALERT REGISTRATION ---
+// Line 18: Registering the Firebase Service Worker for PWA and Background Notifications
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then((registration) => {
-        console.log('Broadcast Agent Registered! Scope:', registration.scope);
-      })
-      .catch((error) => {
-        console.error('Broadcast Agent Registration failed:', error);
-      });
-  });
+    window.addEventListener('load', () => {
+        navigator.serviceWorker
+            .register('/firebase-messaging-sw.js') // Updated path for FCM compatibility
+            .then((registration) => {
+                console.log('PWA & FCM Service Worker Registered! Scope:', registration.scope);
+            })
+            .catch((error) => {
+                console.error('Service Worker Registration failed:', error);
+            });
+    });
 }

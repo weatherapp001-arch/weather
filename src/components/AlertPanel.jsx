@@ -1,18 +1,23 @@
+// File: src/components/AlertPanel.jsx
+// Element Name: AlertPanel Component
 import React, { useState, useEffect, useCallback } from 'react';
 import emailjs from '@emailjs/browser';
 
-const AlertPanel = ({ searchQuery }) => {
-  const GITHUB_TOKEN = import.meta.env.VITE_GITHUB_TOKEN;
-  const REPO_OWNER = import.meta.env.VITE_GITHUB_REPO_OWNER;
-  const REPO_NAME = import.meta.env.VITE_GITHUB_REPO_NAME;
+// Firebase Imports
+import { db, messaging, auth } from '../firebase/config.js'; 
+import { doc, getDoc, setDoc, collection, addDoc } from "firebase/firestore";
+import { getToken } from "firebase/messaging";
+import { signInAnonymously } from 'firebase/auth';
+
+const AlertPanel = ({ searchQuery, isAdmin }) => {
   const WEATHER_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 
   const [contactsList, setContactsList] = useState([]);
   const [selectedEmails, setSelectedEmails] = useState([]);
   const [newEmail, setNewEmail] = useState("");
   const [loading, setLoading] = useState(false);
-  const [fileSha, setFileSha] = useState(null);
   const [dispatchMode, setDispatchMode] = useState('email'); 
+  const [silentUid, setSilentUid] = useState(null);
 
   let rawCity = "Prayagraj";
   if (typeof searchQuery === 'string' && searchQuery.trim() !== '') {
@@ -38,42 +43,86 @@ const AlertPanel = ({ searchQuery }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const fetchContacts = useCallback(async () => {
-    if (!GITHUB_TOKEN || GITHUB_TOKEN.includes("actual_token")) return;
-    try {
-      const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/contacts.json`, {
-        headers: { Authorization: `token ${GITHUB_TOKEN}` }
-      });
-      const data = await res.json();
-      if (data.content) {
-        setContactsList(JSON.parse(atob(data.content)));
-        setFileSha(data.sha); 
+  // Function: initializeSilentSession
+  // Line: 44
+  useEffect(() => {
+    const initializeSilentSession = async () => {
+      try {
+        const userCredential = await signInAnonymously(auth);
+        setSilentUid(userCredential.user.uid);
+      } catch (error) {
+        console.error("Silent Auth Error:", error.message);
       }
-    } catch (err) { console.error("Database Error:", err); }
-  }, [GITHUB_TOKEN, REPO_OWNER, REPO_NAME]);
+    };
+    initializeSilentSession();
+  }, []);
 
-  const saveContactsToGitHub = async () => {
-    if (!GITHUB_TOKEN) return alert("Missing GitHub Token");
+  // Function: fetchContacts (Firestore Pull)
+  // Line: 57
+  const fetchContacts = useCallback(async () => {
+    if (!silentUid) return; 
     setLoading(true);
     try {
-      const updatedContent = btoa(JSON.stringify(contactsList, null, 2));
-      const res = await fetch(`https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/contacts.json`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `token ${GITHUB_TOKEN}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ message: "Updated contacts via Dashboard", content: updatedContent, sha: fileSha })
-      });
+      const docRef = doc(db, "alertSlots", silentUid);
+      const docSnap = await getDoc(docRef);
 
-      if (res.ok) {
-        const data = await res.json();
-        setFileSha(data.content.sha); 
-        alert("✅ Contacts successfully saved to GitHub!");
-      } else throw new Error("Failed to push to GitHub");
+      if (docSnap.exists()) {
+        setContactsList(docSnap.data().list || []);
+      } else {
+        console.log("No cloud database found for this session. Initializing empty list.");
+        setContactsList([]);
+      }
+    } catch (err) { 
+      console.error("Firebase Pull Error:", err); 
+    } finally {
+      setLoading(false);
+    }
+  }, [silentUid]);
+
+  // Function: syncContactsToFirebase (Firestore Push)
+  // Line: 78
+  const syncContactsToFirebase = async () => {
+    if (!silentUid) {
+      alert("Authenticating session, please try again in a moment.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const docRef = doc(db, "alertSlots", silentUid);
+      await setDoc(docRef, { list: contactsList }, { merge: true });
+      alert("✅ Contacts successfully synced to private slot!");
     } catch (err) {
-      alert("❌ Failed to save. Check your GitHub Token permissions.");
-    } finally { setLoading(false); }
+      console.error("Firebase Push Error:", err);
+      alert("❌ Sync Failed. Unable to write to database.");
+    } finally { 
+      setLoading(false); 
+    }
+  };
+
+  // Function: subscribeToBroadcasts (FCM Subscription)
+  // Line: 98
+  const subscribeToBroadcasts = async () => {
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        const currentToken = await getToken(messaging, { 
+          vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY 
+        });
+        if (currentToken) {
+          await addDoc(collection(db, "subscribers"), {
+            token: currentToken,
+            timestamp: new Date()
+          });
+          alert("✅ Successfully subscribed to Area Broadcasts!");
+        } else {
+          alert("❌ Failed to generate device token.");
+        }
+      } else {
+        alert("⚠️ You blocked notifications. Please enable them in site settings.");
+      }
+    } catch (error) {
+      console.error("Subscription error:", error);
+    }
   };
 
   // --- HELPER 1: CONVERT PM2.5 TO US AQI ---
@@ -89,14 +138,12 @@ const AlertPanel = ({ searchQuery }) => {
 
   // --- HELPER 2: EXACT TARGET CITY TIME ZONE CALCULATOR ---
   const formatCityTime = (dtUTC, timezoneOffsetSeconds) => {
-    // We add the city's exact shift from UTC, then read it using getUTCHours
-    // This totally bypasses your browser's IST timezone.
     const localDate = new Date((dtUTC + timezoneOffsetSeconds) * 1000);
     let hours = localDate.getUTCHours();
     let minutes = localDate.getUTCMinutes();
     const ampm = hours >= 12 ? 'PM' : 'AM';
     hours = hours % 12;
-    hours = hours ? hours : 12; // 0 becomes 12
+    hours = hours ? hours : 12; 
     const mins = minutes < 10 ? '0' + minutes : minutes;
     return `${hours}:${mins} ${ampm}`;
   };
@@ -107,49 +154,35 @@ const AlertPanel = ({ searchQuery }) => {
     let maxThreatLevel = 0; 
     let primaryThreat = "Safe (Next 2 Hrs)";
 
-    // 1. Air Quality (AQI > 150 Rule)
     if (metrics.aqi > 150) {
       alerts.push(`TOXIC AIR: AQI is projected to be ${metrics.aqi}. You must wear an N95 mask outside.`);
       if (maxThreatLevel <= 2) { maxThreatLevel = 2; primaryThreat = "Hazard: Toxic AQI"; }
     }
-
-    // 2. Cyclone / Hurricane Rule (Wind Speed > 25 m/s is ~90 km/h)
     if (metrics.windSpeed > 25) {
       alerts.push(`CYCLONE WARNING: Destructive winds at ${Math.round(metrics.windSpeed * 3.6)} km/h. Secure objects and stay indoors!`);
       maxThreatLevel = 3; primaryThreat = "EMERGENCY: Cyclone Risk"; 
     }
-
-    // 3. Flash Flood Rule (Rain volume > 30mm is extreme)
     if (metrics.rainVolume > 30) {
       alerts.push(`FLOOD WARNING: Extreme rainfall (${metrics.rainVolume}mm). Evacuate low-lying areas.`);
       maxThreatLevel = 3; primaryThreat = "EMERGENCY: Flash Flood";
     }
-
-    // 4. Probability of Precipitation Rule (> 70%)
     if (metrics.pop >= 0.70 && metrics.rainVolume <= 30) {
       alerts.push(`HEAVY RAIN: ${Math.round(metrics.pop * 100)}% chance of rain. Carry umbrellas.`);
       if (maxThreatLevel < 1) { maxThreatLevel = 1; primaryThreat = "Watch: High Rain Prob."; }
     }
-
-    // 5. Heatwave Rule
     if (metrics.temp >= 40 || (metrics.temp >= 35 && metrics.humidity >= 60)) {
       alerts.push(`HEATWAVE: Dangerous heat index. Remain in AC to prevent thermal throttling.`);
       if (maxThreatLevel <= 2) { maxThreatLevel = 2; primaryThreat = "Hazard: Heatwave"; }
     }
-
-    // 6. Snowfall Rule
     if (metrics.condition.includes('snow') || metrics.snowVolume > 0) {
       alerts.push(`SNOW ALERT: Blizzard conditions possible. Wrap your travel plans in a strict try-catch block.`);
       if (maxThreatLevel <= 2) { maxThreatLevel = 2; primaryThreat = "Hazard: Snow/Ice"; }
     }
-
-    // 7. Thunderstorm Rule
     if (metrics.condition.includes('thunderstorm')) {
       alerts.push(`LIGHTNING: Active thunderstorms approaching. Stay off open grounds.`);
       if (maxThreatLevel <= 2) { maxThreatLevel = 2; primaryThreat = "Hazard: Thunderstorm"; }
     }
 
-    // Default Safe State
     if (alerts.length === 0) {
       return {
         threat: primaryThreat,
@@ -163,12 +196,13 @@ const AlertPanel = ({ searchQuery }) => {
     };
   };
 
+  // Function: fetchEnvironmentalData
+  // Line: 191
   const fetchEnvironmentalData = useCallback(async (targetCity, fullQuery) => {
     if (!targetCity || !WEATHER_KEY) return;
     setLoading(true);
     
     try {
-      // 1. FETCH WEATHER FORECAST
       let wRes, wUrl;
       if (fullQuery && fullQuery.lat && fullQuery.lon) {
         wUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${fullQuery.lat}&lon=${fullQuery.lon}&units=metric&appid=${WEATHER_KEY}`;
@@ -186,15 +220,12 @@ const AlertPanel = ({ searchQuery }) => {
       const lat = wData.city.coord.lat;
       const lon = wData.city.coord.lon;
 
-      // 2. FETCH AIR QUALITY FORECAST
       const aqiRes = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${lat}&lon=${lon}&appid=${WEATHER_KEY}`);
       const aqiData = await aqiRes.json();
 
-      // 3. THE 2-HOUR TARGET ALGORITHM
       const currentUtcSeconds = Math.floor(Date.now() / 1000);
-      const targetUtcSeconds = currentUtcSeconds + (2 * 60 * 60); // Exact moment 2 hours from now
+      const targetUtcSeconds = currentUtcSeconds + (2 * 60 * 60); 
 
-      // Find the forecast block closest to the 2-hour target
       let futureWeather = wData.list[0];
       let minDiff = Infinity;
       for (const item of wData.list) {
@@ -205,7 +236,6 @@ const AlertPanel = ({ searchQuery }) => {
         }
       }
 
-      // Find the AQI block closest to the 2-hour target
       let futureAQI = aqiData.list[0];
       let minAqiDiff = Infinity;
       for (const item of aqiData.list) {
@@ -216,7 +246,6 @@ const AlertPanel = ({ searchQuery }) => {
         }
       }
 
-      // 4. EXTRACT DATA & FORMAT EXACT LOCAL TIME
       const temp = Math.round(futureWeather.main.temp);
       const humidity = futureWeather.main.humidity;
       const cond = futureWeather.weather[0].main.toLowerCase();
@@ -228,7 +257,6 @@ const AlertPanel = ({ searchQuery }) => {
       const pm25 = futureAQI.components.pm2_5;
       const actualAQI = calculateUS_AQI(pm25);
 
-      // Uses our new custom Time Zone function!
       const forecastTime = formatCityTime(futureWeather.dt, wData.city.timezone);
 
       const futureMetrics = { 
@@ -265,61 +293,44 @@ const AlertPanel = ({ searchQuery }) => {
     fetchEnvironmentalData(currentCity, searchQuery);
   }, [currentCity, searchQuery, fetchContacts, fetchEnvironmentalData]);
 
-  const triggerWebPush = async () => {
-    // 1. Check and request permission
-    if (Notification.permission !== "granted") {
-      const permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        return alert("⚠️ Permission denied. You must allow notifications in your browser settings.");
-      }
-    }
-
-    // 2. The Immortal Spawn Function
-    const spawnNotification = () => {
-      // Create a unique ID for every click so you can send multiple alerts
-      const uniqueTag = "emergency-broadcast-" + Date.now();
-
-      const systemAlert = new Notification(`🚨 AREA ALERT: ${formData.threat}`, {
-        body: `Predicted for ${formData.time}: ${formData.advice}\n\n⚠️ YOU MUST CLICK THIS BOX TO DISMISS.`,
-        icon: "/favicon.svg",
-        vibrate: [200, 100, 200, 100, 200],
-        requireInteraction: true, 
-        tag: uniqueTag 
-      });
-
-      let properlyAcknowledged = false;
-
-      // 3. What happens when they click the notification body
-      systemAlert.onclick = (event) => {
-        event.preventDefault();
-        window.focus(); // Brings the dashboard back
-        properlyAcknowledged = true; // Mark as safely acknowledged
-        systemAlert.close(); // Close it permanently
-      };
-
-      // 4. The "Respawn Hack" - What happens if they click the 'X'
-      systemAlert.onclose = () => {
-        if (!properlyAcknowledged) {
-          // If they tried to close it without clicking the body, spawn it again!
-          setTimeout(spawnNotification, 500); 
-        }
-      };
-    };
-
-    try {
-      spawnNotification();
-      alert("📡 Aggressive Sticky Broadcast deployed! It will not die until clicked.");
-    } catch (error) {
-      console.error("Broadcast Error:", error);
-      alert("❌ Your browser blocked the local notification API.");
-    }
-  };
-
-  const handleDispatch = (e) => {
+  // Function: handleDispatch
+  // Line: 288
+  const handleDispatch = async (e) => {
     e.preventDefault();
     
     if (dispatchMode === 'broadcast') {
-      triggerWebPush();
+      setLoading(true);
+      try {
+        // 1. Fetch the secure ID token from Firebase Auth
+        const currentUser = auth.currentUser;
+        if (!currentUser) throw new Error("No active session found.");
+        const idToken = await currentUser.getIdToken();
+
+        // 2. Attach it to the Authorization header
+        const response = await fetch('/api/broadcast', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}` // <-- Secure token attached
+          },
+          body: JSON.stringify({
+            title: `🚨 EMERGENCY: ${formData.threat}`,
+            body: `Predicted for ${formData.time}: ${formData.advice}`
+          }),
+        });
+
+        const result = await response.json();
+        if (response.ok && result.success) {
+          alert(`📡 Broadcast Successful! Alert sent to ${result.sentCount} devices.`);
+        } else {
+          throw new Error(result.error || "Broadcast rejected.");
+        }
+      } catch (err) {
+        console.error("Broadcast error:", err);
+        alert(`❌ Broadcast failed: ${err.message}`);
+      } finally {
+        setLoading(false);
+      }
     } else {
       if (selectedEmails.length === 0) return alert("⚠️ Select a recipient first.");
       const cleanParams = {
@@ -384,10 +395,10 @@ const AlertPanel = ({ searchQuery }) => {
             {dispatchMode === 'email' ? (
               <>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '10px' }}>
-                  <button type="button" onClick={fetchContacts} style={syncBtnStyle} title="Reload Contacts">
+                  <button type="button" onClick={fetchContacts} style={syncBtnStyle} title="Pull from Database">
                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>cloud_download</span> Pull
                   </button>
-                  <button type="button" onClick={saveContactsToGitHub} style={saveBtnStyle} title="Save to GitHub">
+                  <button type="button" onClick={syncContactsToFirebase} style={saveBtnStyle} title="Push to Database">
                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>cloud_upload</span> Push
                   </button>
                 </div>
@@ -411,6 +422,9 @@ const AlertPanel = ({ searchQuery }) => {
                 <p style={{ fontSize: '12px', opacity: 0.8, marginTop: '8px', lineHeight: '1.4' }}>
                   This will trigger a system-level alert to all devices currently connected to the local network or web-app, bypassing the need for phone numbers.
                 </p>
+                <button type="button" onClick={subscribeToBroadcasts} style={{...saveBtnStyle, marginTop: '10px', display: 'inline-flex'}}>
+                  Subscribe Current Device to Alerts
+                </button>
               </div>
             )}
           </div>
@@ -457,7 +471,6 @@ const AlertPanel = ({ searchQuery }) => {
     </div>
   );
 };
-
 
 // --- STYLES ---
 const viewportStyle = {
@@ -718,6 +731,5 @@ const loaderOverlayStyle = {
   color: '#A3E4D7',
   fontWeight: 'bold'
 };
-
 
 export default AlertPanel;
