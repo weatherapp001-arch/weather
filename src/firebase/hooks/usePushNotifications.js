@@ -27,8 +27,9 @@ const usePushNotifications = () => {
         // 4. If they allowed it (either just now, or previously)
         if (permission === 'granted') {
           const currentToken = await getToken(messaging, {
-            vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY
-          });
+            vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
+            serviceWorkerRegistration: await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+        });
 
           if (currentToken) {
             // 5. DATABASE OPTIMIZATION: Check local storage so we don't overwrite 

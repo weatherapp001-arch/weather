@@ -47,26 +47,43 @@ self.addEventListener('fetch', (event) => {
 });
 
 // --- FCM BACKGROUND LISTENER ---
-messaging.onBackgroundMessage((payload) => {
-  console.log('[SW] Received background message ', payload);
+messaging.onBackgroundMessage(async (payload) => {
+    const notificationTitle = payload.notification.title;
+    
+    // Define options with basic properties
+    const notificationOptions = {
+        body: payload.notification.body,
+        icon: payload.notification.icon || '/default-icon.png',
+        tag: 'weather-alert',
+        data: payload.data
+    };
 
-  const notificationTitle = payload.notification.title || '🚨 Weather Alert';
-  const notificationOptions = {
-    body: payload.notification.body,
-    icon: '/favicon.svg',
-    badge: '/favicon.svg',
-    vibrate: [200, 100, 200, 100, 200],
-    requireInteraction: true, 
-    tag: 'emergency-broadcast',
-    actions: [
-      { action: 'acknowledge', title: '✅ I am Safe' },
-      { action: 'open', title: '🔍 View Dashboard' }
-    ]
-  };
+    // Logic to safely handle line 44 network fetch for images/assets
+    if (payload.notification.image) {
+        try {
+            // Attempt to fetch the resource
+            const response = await fetch(payload.notification.image, { 
+                mode: 'no-cors',
+                cache: 'default' 
+            });
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
+            if (!response || !response.ok) {
+                throw new Error('Network response was not valid');
+            }
+            
+            notificationOptions.image = payload.notification.image;
+        } catch (error) {
+            // Line 44: Handling the "Failed to fetch" TypeError gracefully
+            console.warn('[Service Worker] Asset fetch failed, proceeding without image:', error);
+            
+            // By catching the error here, the promise is no longer rejected
+            // We proceed with the notification minus the failing image
+            delete notificationOptions.image;
+        }
+    }
+
+    return self.registration.showNotification(notificationTitle, notificationOptions);
 });
-
 // --- NOTIFICATION CLICK HANDLER ---
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
