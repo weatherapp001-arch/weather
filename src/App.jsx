@@ -13,8 +13,9 @@ const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 
 function App() {
 
-    usePushNotifications();
     
+    usePushNotifications();
+
     const [activeTab, setActiveTab] = useState('cloud'); 
     const [isDarkMode, setIsDarkMode] = useState(false);
     
