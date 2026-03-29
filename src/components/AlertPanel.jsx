@@ -3,16 +3,17 @@ import emailjs from '@emailjs/browser';
 
 // Firebase Imports
 import { db, messaging, auth } from '../firebase/config.js'; 
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { getToken } from "firebase/messaging";
-import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { useAuth } from '../firebase/auth'; // Using the context from your auth.jsx
 
 const AlertPanel = ({ searchQuery }) => {
-  // Line 13: Your verified Admin UID[cite: 2]
+  // Line 14: Strict Admin Identification [cite: 49, 158]
   const MASTER_ADMIN_UID = "eurBOkHyrMMbeti2vzGKPpqFDO13";
+  const { user, isAdmin } = useAuth(); // Global check for Admin status [cite: 165]
   const WEATHER_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 
-  const [isVerifiedAdmin, setIsVerifiedAdmin] = useState(false);
   const [contactsList, setContactsList] = useState([]);
   const [selectedEmails, setSelectedEmails] = useState([]);
   const [newEmail, setNewEmail] = useState("");
@@ -30,7 +31,6 @@ const AlertPanel = ({ searchQuery }) => {
   }
   const currentCity = rawCity.replace(/\+/g, ' ').trim();
 
-  // Updated Line 33: Complete state tracking for UI and Email[cite: 2]
   const [formData, setFormData] = useState({
     city: currentCity,
     threat: "Initializing...",
@@ -46,43 +46,13 @@ const AlertPanel = ({ searchQuery }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  // --- AUTH & ADMIN VERIFICATION ---
-  // --- AUTH & ADMIN VERIFICATION ---
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        setSilentUid(user.uid);
-        
-        // 1. Define allowed testing environments
-        const isLocalhost = window.location.hostname === "localhost";
-        const isVercelTest = window.location.hostname.includes("vercel.app");
-        
-        // 2. Unlock admin if UID matches OR if it's an allowed testing domain
-        if (user.uid === MASTER_ADMIN_UID || isLocalhost || isVercelTest) {
-          setIsVerifiedAdmin(true);
-        } else {
-          setIsVerifiedAdmin(false); 
-        }
-   
-      } else {
-        try {
-          // 3. Keep anonymous login for normal users/database read access
-          const userCredential = await signInAnonymously(auth);
-          setSilentUid(userCredential.user.uid);
-        } catch (error) {
-          console.error("Auth Error:", error.message);
-        }
-      }
-    });
-    
-    return () => unsubscribe();
-  }, []); // Removed MASTER_ADMIN_UID from dependency array to prevent unnecessary re-renders
-
-  // --- FCM: Background Registration ---
+  // --- FCM: Background Registration & Email Linking ---
+  // Updated Line 55: Links the 'tapped' email to the device token [cite: 60]
   useEffect(() => {
     const autoRegisterDevice = async () => {
       try {
-        if (!("Notification" in window)) return;
+        if (!("Notification" in window) || !user) return;
+        
         if (Notification.permission === 'granted') {
           const token = await getToken(messaging, { 
             vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY 
@@ -92,7 +62,9 @@ const AlertPanel = ({ searchQuery }) => {
             const tokenRef = doc(db, "fcm_tokens", token.substring(0, 20));
             await setDoc(tokenRef, {
               token: token,
-              lastSeen: new Date(),
+              uid: user.uid,
+              email: user.email, // Registered email for broadcast [cite: 143]
+              lastSeen: serverTimestamp(),
               device: navigator.userAgent
             }, { merge: true });
           }
@@ -102,13 +74,13 @@ const AlertPanel = ({ searchQuery }) => {
       }
     };
     autoRegisterDevice();
-  }, []);
+  }, [user]);
 
   const fetchContacts = useCallback(async () => {
-    if (!silentUid) return; 
+    if (!user) return; 
     setLoading(true);
     try {
-      const docRef = doc(db, "alertSlots", silentUid);
+      const docRef = doc(db, "alertSlots", user.uid);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
         setContactsList(docSnap.data().list || []);
@@ -120,13 +92,13 @@ const AlertPanel = ({ searchQuery }) => {
     } finally {
       setLoading(false);
     }
-  }, [silentUid]);
+  }, [user]);
 
   const saveContacts = async () => {
-    if (!silentUid) return alert("⚠️ Authentication required.");
+    if (!user) return alert("⚠️ Authentication required.");
     setLoading(true);
     try {
-      const docRef = doc(db, "alertSlots", silentUid);
+      const docRef = doc(db, "alertSlots", user.uid);
       await setDoc(docRef, { list: contactsList }, { merge: true });
       alert("✅ Contacts successfully synced.");
     } catch (err) { 
@@ -163,11 +135,11 @@ const AlertPanel = ({ searchQuery }) => {
   const handleDispatch = async (e) => {
     e.preventDefault();
     if (dispatchMode === 'broadcast') {
-      if (!isVerifiedAdmin) return alert("❌ Admin access required.");
+      // Line 136: Removed localhost/Vercel bypass for strict security [cite: 57, 80]
+      if (!isAdmin) return alert("❌ Admin access required.");
       setLoading(true);
       try {
-        const user = auth.currentUser;
-        const idToken = await user.getIdToken(true);
+        const idToken = await auth.currentUser.getIdToken(true);
         const response = await fetch('/api/broadcast', {
           method: 'POST',
           headers: { 
@@ -187,7 +159,6 @@ const AlertPanel = ({ searchQuery }) => {
         setLoading(false);
       }
     } else {
-      // Corrected Line 178: Mapping all missing fields to EmailJS[cite: 2]
       if (selectedEmails.length === 0) return alert("⚠️ Select a recipient.");
       setLoading(true);
       emailjs.send(
@@ -230,7 +201,6 @@ const AlertPanel = ({ searchQuery }) => {
       const aqiRes = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${lat}&lon=${lon}&appid=${WEATHER_KEY}`);
       const aqiData = await aqiRes.json();
 
-      // Look-ahead window shifted to 3 hours (10,800 seconds)[cite: 2]
       const targetSeconds = Math.floor(Date.now() / 1000) + 10800; 
       const futureWeather = wData.list.reduce((prev, curr) => Math.abs(curr.dt - targetSeconds) < Math.abs(prev.dt - targetSeconds) ? curr : prev);
       const futureAQI = aqiData.list.reduce((prev, curr) => Math.abs(curr.dt - targetSeconds) < Math.abs(prev.dt - targetSeconds) ? curr : prev);
@@ -279,7 +249,6 @@ const AlertPanel = ({ searchQuery }) => {
         </div>
 
         <form onSubmit={handleDispatch} style={formStyle}>
-          {/* Dispatch Section with Restore Toggle Button[cite: 2] */}
           <div style={innerSectionStyle}>
             <div style={sectionTopRowStyle}>
               <h4 style={labelStyle}>
@@ -289,7 +258,8 @@ const AlertPanel = ({ searchQuery }) => {
                 1. {dispatchMode === 'email' ? 'Email Dispatch' : 'Broadcast'}
               </h4>
               
-              {isVerifiedAdmin && (
+              {/* Line 248: Only visible to MASTER_ADMIN_UID [cite: 106, 165] */}
+              {isAdmin && (
                 <div style={toggleContainerStyle}>
                   <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>Email</button>
                   <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>Broadcast</button>
@@ -320,12 +290,11 @@ const AlertPanel = ({ searchQuery }) => {
               <div style={broadcastNoticeStyle}>
                 <span className="material-symbols-outlined" style={{ fontSize: '42px', color: '#ff4d4d' }}>sensors</span>
                 <p style={{ margin: '10px 0 5px 0', fontWeight: 'bold', color: '#ff4d4d' }}>BROADCAST MODE ACTIVE</p>
-                <p style={{ fontSize: '12px', opacity: 0.7 }}>Message will be sent to all subscribed FCM tokens.</p>
+                <p style={{ fontSize: '12px', opacity: 0.7 }}>Message will be pushed to all registered devices and emails.</p>
               </div>
             )}
           </div>
 
-          {/* Variables Grid[cite: 2] */}
           <div style={innerSectionStyle}>
             <div style={sectionTopRowStyle}>
               <h4 style={labelStyle}>2. Variables</h4>
@@ -352,7 +321,7 @@ const AlertPanel = ({ searchQuery }) => {
   );
 };
 
-// --- STYLES[cite: 2] ---
+// --- STYLES PRESERVED --- [cite: 118-142]
 const viewportStyle = { height: '100%', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: '20px 0', paddingBottom: '60px' };
 const cardStyle = { width: '90%', maxWidth: '600px', padding: '25px', borderRadius: '20px', background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(15px)', border: '1px solid rgba(255,255,255,0.1)', position: 'relative', marginBottom: '30px' };
 const headerContainerStyle = { borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '15px', marginBottom: '20px' };

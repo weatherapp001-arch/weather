@@ -1,18 +1,7 @@
 import { useEffect } from 'react';
-import { 
-  getToken, 
-  onMessage 
-} from 'firebase/messaging'; 
-import { 
-  doc, 
-  setDoc, 
-  serverTimestamp 
-} from 'firebase/firestore';
-import { 
-  onAuthStateChanged, 
-  GoogleAuthProvider, 
-  signInWithPopup 
-} from 'firebase/auth';
+import { getToken, onMessage } from 'firebase/messaging'; 
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { auth, db, messaging } from '../config';
 
 const usePushNotifications = () => {
@@ -20,8 +9,9 @@ const usePushNotifications = () => {
     const provider = new GoogleAuthProvider();
 
     const initializeAutonomousPush = async () => {
-      // Line 23: Monitor Auth State to link Token with Email
+      // Monitor Auth State to link Token with Email
       onAuthStateChanged(auth, async (user) => {
+        // If not logged in, trigger the frictionless "tap email" popup
         if (!user) {
           try {
             await signInWithPopup(auth, provider);
@@ -38,6 +28,7 @@ const usePushNotifications = () => {
           }
 
           if (permission === 'granted') {
+            // Register service worker for background alerts [cite: 147]
             const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
             
             const currentToken = await getToken(messaging, {
@@ -46,6 +37,7 @@ const usePushNotifications = () => {
             });
 
             if (currentToken) {
+              // Link token to user's UID and Email for broadcast targeting [cite: 150]
               const tokenRef = doc(db, 'fcm_tokens', currentToken.substring(0, 20));
               await setDoc(tokenRef, {
                 token: currentToken,
@@ -56,6 +48,7 @@ const usePushNotifications = () => {
               }, { merge: true });
             }
 
+            // Handle foreground alerts while site is open
             onMessage(messaging, (payload) => {
               new Notification(payload.notification.title, {
                 body: payload.notification.body,
