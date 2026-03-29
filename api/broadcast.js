@@ -24,22 +24,27 @@ export default async function handler(req, res) {
     }
 
     // Format the payload
-   // Format the payload for high-priority delivery
+   // Line 29: Format the payload for Native-style delivery
     const message = {
       notification: { 
         title, 
         body,
-        // Added icon for native feel
-        image: 'https://weather-alert-7a801.web.app/logo192.png' 
+        icon: 'https://weather-alert-7a801.vercel.app/logo192.png' // Use absolute URL
       },
-      // This is crucial for Android/iOS background delivery
+      // This tells Android/Chrome to wake up the phone immediately
       android: {
         priority: 'high',
         notification: {
           channelId: 'weather_alerts',
-          priority: 'max',
-          defaultSound: true,
-          defaultVibrateTimings: true
+          priority: 'max'
+        }
+      },
+      webpush: {
+        headers: {
+          Urgency: 'high'
+        },
+        notification: {
+          requireInteraction: true // Keeps notification visible until clicked
         }
       },
       tokens: tokens,
