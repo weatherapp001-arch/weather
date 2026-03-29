@@ -47,16 +47,26 @@ const AlertPanel = ({ searchQuery }) => {
   };
 
   // --- AUTH & ADMIN VERIFICATION ---
+  // --- AUTH & ADMIN VERIFICATION ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setSilentUid(user.uid);
-        // Force unlock admin on localhost or if UID matches[cite: 2]
-        if (user.uid === MASTER_ADMIN_UID || window.location.hostname === "localhost") {
+        
+        // 1. Define allowed testing environments
+        const isLocalhost = window.location.hostname === "localhost";
+        const isVercelTest = window.location.hostname.includes("vercel.app");
+        
+        // 2. Unlock admin if UID matches OR if it's an allowed testing domain
+        if (user.uid === MASTER_ADMIN_UID || isLocalhost || isVercelTest) {
           setIsVerifiedAdmin(true);
+        } else {
+          setIsVerifiedAdmin(false); 
         }
+   
       } else {
         try {
+          // 3. Keep anonymous login for normal users/database read access
           const userCredential = await signInAnonymously(auth);
           setSilentUid(userCredential.user.uid);
         } catch (error) {
@@ -64,8 +74,9 @@ const AlertPanel = ({ searchQuery }) => {
         }
       }
     });
+    
     return () => unsubscribe();
-  }, [MASTER_ADMIN_UID]);
+  }, []); // Removed MASTER_ADMIN_UID from dependency array to prevent unnecessary re-renders
 
   // --- FCM: Background Registration ---
   useEffect(() => {
