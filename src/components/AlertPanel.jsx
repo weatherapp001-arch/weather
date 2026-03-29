@@ -1,26 +1,22 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import emailjs from '@emailjs/browser';
-
-// Firebase Imports
 import { db, messaging, auth } from '../firebase/config.js'; 
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { getToken } from "firebase/messaging";
-import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { useAuth } from '../firebase/auth'; // Using the context from your auth.jsx
+import { useAuth } from '../firebase/auth'; // Centralized Auth Context [cite: 168]
 
 const AlertPanel = ({ searchQuery }) => {
-  // Line 14: Strict Admin Identification [cite: 49, 158]
-  const MASTER_ADMIN_UID = "eurBOkHyrMMbeti2vzGKPpqFDO13";
-  const { user, isAdmin } = useAuth(); // Global check for Admin status [cite: 165]
+  // Line 11: Access global Auth state and isAdmin check [cite: 165, 166]
+  const { user, isAdmin, loading, loginWithGoogle } = useAuth();
   const WEATHER_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 
   const [contactsList, setContactsList] = useState([]);
   const [selectedEmails, setSelectedEmails] = useState([]);
   const [newEmail, setNewEmail] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [dispatchMode, setDispatchMode] = useState('email'); 
-  const [silentUid, setSilentUid] = useState(null);
 
+  // Line 21: Determine city from search query [cite: 52-54]
   let rawCity = "Prayagraj";
   if (typeof searchQuery === 'string' && searchQuery.trim() !== '') {
     rawCity = searchQuery;
@@ -31,6 +27,7 @@ const AlertPanel = ({ searchQuery }) => {
   }
   const currentCity = rawCity.replace(/\+/g, ' ').trim();
 
+  // Line 33: Weather data state [cite: 55]
   const [formData, setFormData] = useState({
     city: currentCity,
     threat: "Initializing...",
@@ -38,22 +35,23 @@ const AlertPanel = ({ searchQuery }) => {
     temp: "--",
     aqi: "--",
     condition: "Waiting...",
-    advice: "Click 'Update' to fetch the latest predictive data."
+    advice: "Fetch data to begin."
   });
 
-  const handleFormChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  // --- FCM: Background Registration & Email Linking ---
-  // Updated Line 55: Links the 'tapped' email to the device token [cite: 60]
+  // Line 44: Trigger login popup only if no user is found and not already loading
   useEffect(() => {
-    const autoRegisterDevice = async () => {
+    if (!loading && !user) {
+      loginWithGoogle();
+    }
+  }, [user, loading, loginWithGoogle]);
+
+  // Line 51: FCM Device Registration - Links Token to User Email [cite: 60, 61, 150]
+  useEffect(() => {
+    const syncDeviceToken = async () => {
+      if (!user) return;
       try {
-        if (!("Notification" in window) || !user) return;
-        
-        if (Notification.permission === 'granted') {
+        const permission = await Notification.requestPermission();
+        if (permission === 'granted') {
           const token = await getToken(messaging, { 
             vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY 
           });
@@ -63,51 +61,25 @@ const AlertPanel = ({ searchQuery }) => {
             await setDoc(tokenRef, {
               token: token,
               uid: user.uid,
-              email: user.email, // Registered email for broadcast [cite: 143]
+              email: user.email, // Saves user email for broadcast identification
               lastSeen: serverTimestamp(),
               device: navigator.userAgent
             }, { merge: true });
           }
         }
       } catch (error) {
-        console.error("FCM Sync Failed:", error);
+        console.error("Token sync failed:", error);
       }
     };
-    autoRegisterDevice();
+    syncDeviceToken();
   }, [user]);
 
-  const fetchContacts = useCallback(async () => {
-    if (!user) return; 
-    setLoading(true);
-    try {
-      const docRef = doc(db, "alertSlots", user.uid);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        setContactsList(docSnap.data().list || []);
-      } else {
-        setContactsList([]);
-      }
-    } catch (err) { 
-      console.error("Pull Error:", err); 
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  const saveContacts = async () => {
-    if (!user) return alert("⚠️ Authentication required.");
-    setLoading(true);
-    try {
-      const docRef = doc(db, "alertSlots", user.uid);
-      await setDoc(docRef, { list: contactsList }, { merge: true });
-      alert("✅ Contacts successfully synced.");
-    } catch (err) { 
-      alert("❌ Failed to push contacts.");
-    } finally {
-      setLoading(false);
-    }
+  const handleFormChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  // Line 83: AQI Calculation Logic [cite: 69-73]
   const calculateUS_AQI = (pm25) => {
     if (!pm25) return 20;
     if (pm25 <= 12.0) return Math.round((50 / 12.0) * pm25);
@@ -117,27 +89,28 @@ const AlertPanel = ({ searchQuery }) => {
     return 300;
   };
 
+  // Line 93: Logic to generate threat level based on weather metrics [cite: 75-78]
   const generateAdvancedAlert = (metrics) => {
     const alerts = [];
     if (metrics.aqi > 150) alerts.push(`⚠️ AQI: ${metrics.aqi} (Unhealthy).`);
-    if (metrics.windSpeed > 17) alerts.push(`💨 High Winds detected.`);
-    if (metrics.temp >= 40) alerts.push(`🔥 Extreme Heat Alert.`);
+    if (metrics.windSpeed > 17) alerts.push(`💨 High Winds.`);
+    if (metrics.temp >= 40) alerts.push(`🔥 Extreme Heat.`);
 
     if (alerts.length === 0) {
       return { 
-        threat: "Safe (Next 3 Hrs)", 
-        advice: `Target Local Time: ${metrics.time}. No significant atmospheric hazards predicted.` 
+        threat: "Safe", 
+        advice: `Local Time: ${metrics.time}. No significant hazards predicted.` 
       };
     }
     return { threat: "Weather Warning", advice: `Predicted for ${metrics.time}: ` + alerts.join(" ") };
   };
 
+  // Line 110: Dispatcher handles both EmailJS and Serverless Broadcast [cite: 79-89]
   const handleDispatch = async (e) => {
     e.preventDefault();
     if (dispatchMode === 'broadcast') {
-      // Line 136: Removed localhost/Vercel bypass for strict security [cite: 57, 80]
-      if (!isAdmin) return alert("❌ Admin access required.");
-      setLoading(true);
+      if (!isAdmin) return alert("❌ Access Restricted to Admin.");
+      setIsProcessing(true);
       try {
         const idToken = await auth.currentUser.getIdToken(true);
         const response = await fetch('/api/broadcast', {
@@ -152,15 +125,15 @@ const AlertPanel = ({ searchQuery }) => {
           }),
         });
         const result = await response.json();
-        if (response.ok && result.success) alert(`🚀 Broadcast Sent!`);
+        if (response.ok && result.success) alert(`🚀 Global Broadcast Triggered!`);
       } catch (err) {
         alert(`❌ Dispatch Error: ${err.message}`);
       } finally {
-        setLoading(false);
+        setIsProcessing(false);
       }
     } else {
       if (selectedEmails.length === 0) return alert("⚠️ Select a recipient.");
-      setLoading(true);
+      setIsProcessing(true);
       emailjs.send(
         import.meta.env.VITE_EMAILJS_SERVICE_ID,
         import.meta.env.VITE_EMAILJS_TEMPLATE_ID,
@@ -168,32 +141,49 @@ const AlertPanel = ({ searchQuery }) => {
           to_emails: selectedEmails.join(","),
           city: formData.city,
           threat: formData.threat,
-          condition: formData.condition, 
-          temp: formData.temp,           
-          aqi: formData.aqi,             
           advice: formData.advice
         },
         import.meta.env.VITE_EMAILJS_PUBLIC_KEY
-      ).then(() => alert("✅ Detailed Email Sent!"))
-       .catch(() => alert("❌ Email Failed."))
-       .finally(() => setLoading(false));
+      ).then(() => alert("✅ Emails Dispatched!"))
+       .finally(() => setIsProcessing(false));
     }
   };
 
-  const formatCityTime = (dtUTC, timezoneOffsetSeconds) => {
-    const localDate = new Date((dtUTC + timezoneOffsetSeconds) * 1000);
-    let hours = localDate.getUTCHours();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12 || 12; 
-    const mins = localDate.getUTCMinutes();
-    return `${hours}:${mins < 10 ? '0'+mins : mins} ${ampm}`;
+  const fetchContacts = useCallback(async () => {
+    if (!user) return; 
+    setIsProcessing(true);
+    try {
+      const docRef = doc(db, "alertSlots", user.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        setContactsList(docSnap.data().list || []);
+      }
+    } catch (err) { 
+      console.error("Fetch Error:", err); 
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [user]);
+
+  const saveContacts = async () => {
+    if (!user) return alert("⚠️ Authentication required.");
+    setIsProcessing(true);
+    try {
+      const docRef = doc(db, "alertSlots", user.uid);
+      await setDoc(docRef, { list: contactsList }, { merge: true });
+      alert("✅ Contacts Updated.");
+    } catch (err) { 
+      alert("❌ Sync Failed.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const fetchEnvironmentalData = useCallback(async (targetCity) => {
     if (!targetCity || !WEATHER_KEY) return;
-    setLoading(true);
+    setIsProcessing(true);
     try {
-      const wUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(targetCity === 'Prayagraj' ? 'Allahabad' : targetCity)}&units=metric&appid=${WEATHER_KEY}`;
+      const wUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(targetCity)}&units=metric&appid=${WEATHER_KEY}`;
       const wRes = await fetch(wUrl);
       const wData = await wRes.json();
       const { lat, lon } = wData.city.coord;
@@ -206,22 +196,20 @@ const AlertPanel = ({ searchQuery }) => {
       const futureAQI = aqiData.list.reduce((prev, curr) => Math.abs(curr.dt - targetSeconds) < Math.abs(prev.dt - targetSeconds) ? curr : prev);
 
       const actualAQI = calculateUS_AQI(futureAQI.components.pm2_5);
-      const forecastTime = formatCityTime(futureWeather.dt, wData.city.timezone);
-      const alertInfo = generateAdvancedAlert({ aqi: actualAQI, time: forecastTime, windSpeed: futureWeather.wind.speed, temp: futureWeather.main.temp });
+      const alertInfo = generateAdvancedAlert({ aqi: actualAQI, time: "3hr Forecast", windSpeed: futureWeather.wind.speed, temp: futureWeather.main.temp });
 
-      setFormData({
-        city: targetCity,
-        time: forecastTime,
+      setFormData(prev => ({
+        ...prev,
         temp: `${Math.round(futureWeather.main.temp)}°C`,
         aqi: actualAQI,
         condition: futureWeather.weather[0].main,
         threat: alertInfo.threat,
         advice: alertInfo.advice
-      });
+      }));
     } catch (err) {
-      setFormData(prev => ({ ...prev, threat: "Sync Interrupted" }));
+      console.error("Weather Sync Error:", err);
     } finally {
-      setLoading(false);
+      setIsProcessing(false);
     }
   }, [WEATHER_KEY]);
 
@@ -231,88 +219,73 @@ const AlertPanel = ({ searchQuery }) => {
   }, [currentCity, fetchContacts, fetchEnvironmentalData]);
 
   return (
-    <div className="alert-view-container hide-scroll" style={viewportStyle}>
-      <div className="glass-card" style={cardStyle}>
-        
-        {loading && (
-          <div style={loaderOverlayStyle}>
-             <span className="material-symbols-outlined" style={{ fontSize: '48px', animation: 'spin 2s linear infinite' }}>sync</span>
-             <p style={{marginTop: '10px'}}>Syncing Systems...</p>
-          </div>
-        )}
+    <div className="alert-view-container hide-scroll">
+      <div className="glass-card">
+        {isProcessing && <div><span>sync</span><p>Processing...</p></div>}
 
-        <div style={headerContainerStyle}>
-          <h2 style={headerStyle}>
-            <span className="material-symbols-outlined" style={{ fontSize: '36px' }}>emergency_home</span>
-            Emergency Dispatch System
-          </h2>
+        <div>
+          <h2><span>emergency_home</span> Emergency Dispatch System</h2>
+          <p>Logged as: {user?.email || 'Verifying...'}</p>
         </div>
 
-        <form onSubmit={handleDispatch} style={formStyle}>
-          <div style={innerSectionStyle}>
-            <div style={sectionTopRowStyle}>
-              <h4 style={labelStyle}>
-                <span className="material-symbols-outlined">
-                  {dispatchMode === 'email' ? 'mail' : 'cell_tower'}
-                </span> 
-                1. {dispatchMode === 'email' ? 'Email Dispatch' : 'Broadcast'}
-              </h4>
-              
-              {/* Line 248: Only visible to MASTER_ADMIN_UID [cite: 106, 165] */}
+        <form onSubmit={handleDispatch}>
+          <div>
+            <div>
+              <h4><span>{dispatchMode === 'email' ? 'mail' : 'cell_tower'}</span> 1. Mode</h4>
+              {/* Line 233: Broadcast toggle only visible to verified Admin [cite: 105, 106] */}
               {isAdmin && (
-                <div style={toggleContainerStyle}>
-                  <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>Email</button>
-                  <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>Broadcast</button>
+                <div>
+                  <button type="button" onClick={() => setDispatchMode('email')}>Email</button>
+                  <button type="button" onClick={() => setDispatchMode('broadcast')}>Broadcast</button>
                 </div>
               )}
             </div>
             
             {dispatchMode === 'email' ? (
               <>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '10px' }}>
-                  <button type="button" onClick={fetchContacts} style={syncBtnStyle}>Pull</button>
-                  <button type="button" onClick={saveContacts} style={saveBtnStyle}>Push</button>
+                <div>
+                  <button type="button" onClick={fetchContacts}>Pull</button>
+                  <button type="button" onClick={saveContacts}>Push</button>
                 </div>
-                <div className="hide-scroll" style={scrollContainer}>
+                <div>
                   {contactsList.map(email => (
-                    <label key={email} style={contactItemStyle}>
+                    <label key={email}>
                       <input type="checkbox" onChange={(e) => setSelectedEmails(prev => e.target.checked ? [...prev, email] : prev.filter(i => i !== email))} />
                       {email}
                     </label>
                   ))}
                 </div>
-                <div style={inputContainerStyle}>
-                  <input type="email" placeholder="New email..." value={newEmail} onChange={e => setNewEmail(e.target.value)} style={inputStyle} />
-                  <button type="button" onClick={() => { if(newEmail) { setContactsList([...contactsList, newEmail]); setNewEmail(""); } }} style={addBtnStyle}>Add</button>
+                <div>
+                  <input type="email" placeholder="Add email..." value={newEmail} onChange={e => setNewEmail(e.target.value)} />
+                  <button type="button" onClick={() => { if(newEmail) { setContactsList([...contactsList, newEmail]); setNewEmail(""); } }}>Add</button>
                 </div>
               </>
             ) : (
-              <div style={broadcastNoticeStyle}>
-                <span className="material-symbols-outlined" style={{ fontSize: '42px', color: '#ff4d4d' }}>sensors</span>
-                <p style={{ margin: '10px 0 5px 0', fontWeight: 'bold', color: '#ff4d4d' }}>BROADCAST MODE ACTIVE</p>
-                <p style={{ fontSize: '12px', opacity: 0.7 }}>Message will be pushed to all registered devices and emails.</p>
+              <div>
+                <span>sensors</span>
+                <p>BROADCAST MODE ACTIVE</p>
+                <p>Alerts will be pushed to all registered devices and user emails.</p>
               </div>
             )}
           </div>
 
-          <div style={innerSectionStyle}>
-            <div style={sectionTopRowStyle}>
-              <h4 style={labelStyle}>2. Variables</h4>
-              <button type="button" onClick={() => fetchEnvironmentalData(currentCity)} style={syncBtnStyle}>Update</button>
+          <div>
+            <div>
+              <h4>2. Variables</h4>
+              <button type="button" onClick={() => fetchEnvironmentalData(currentCity)}>Update</button>
             </div>
-            <div style={variableGrid}>
-              <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} placeholder="City" />
-              <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} placeholder="Threat" />
-              <input name="condition" value={formData.condition} onChange={handleFormChange} style={editableInputStyle} placeholder="Condition" />
-              <input name="temp" value={`${formData.temp} (AQI: ${formData.aqi})`} readOnly style={editableInputStyle} placeholder="Temp/AQI" />
-              
-              <div style={textareaGroupStyle}>
-                <textarea name="advice" value={formData.advice} onChange={handleFormChange} style={editableTextareaStyle} rows="3" />
+            <div>
+              <input name="city" value={formData.city} onChange={handleFormChange} placeholder="City" />
+              <input name="threat" value={formData.threat} onChange={handleFormChange} placeholder="Threat" />
+              <input name="condition" value={formData.condition} onChange={handleFormChange} placeholder="Condition" />
+              <input name="temp" value={`${formData.temp} (AQI: ${formData.aqi})`} readOnly placeholder="Temp/AQI" />
+              <div>
+                <textarea name="advice" value={formData.advice} onChange={handleFormChange} rows="3" />
               </div>
             </div>
           </div>
 
-          <button type="submit" style={dispatchBtnStyle}>
+          <button type="submit">
             {dispatchMode === 'email' ? 'Send Emergency Emails' : 'Trigger Global Broadcast'}
           </button>
         </form>
@@ -320,6 +293,7 @@ const AlertPanel = ({ searchQuery }) => {
     </div>
   );
 };
+
 
 // --- STYLES PRESERVED --- [cite: 118-142]
 const viewportStyle = { height: '100%', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: '20px 0', paddingBottom: '60px' };

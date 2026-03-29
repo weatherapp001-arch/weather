@@ -9,55 +9,42 @@ const usePushNotifications = () => {
     const provider = new GoogleAuthProvider();
 
     const initializeAutonomousPush = async () => {
-      // Monitor Auth State to link Token with Email
+      // Line 15: Monitor Auth state. If no user, show the Email Selection popup.
       onAuthStateChanged(auth, async (user) => {
-        // If not logged in, trigger the frictionless "tap email" popup
         if (!user) {
           try {
+            // This is the one-time email selection popup
             await signInWithPopup(auth, provider);
           } catch (err) {
-            console.warn("User closed the verification popup.");
+            console.warn("User dismissed the email verification.");
             return;
           }
         }
 
-        try {
-          let permission = Notification.permission;
-          if (permission === 'default') {
-            permission = await Notification.requestPermission();
-          }
-
-          if (permission === 'granted') {
-            // Register service worker for background alerts [cite: 147]
-            const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-            
-            const currentToken = await getToken(messaging, {
-              vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
-              serviceWorkerRegistration: registration
-            });
-
-            if (currentToken) {
-              // Link token to user's UID and Email for broadcast targeting [cite: 150]
-              const tokenRef = doc(db, 'fcm_tokens', currentToken.substring(0, 20));
-              await setDoc(tokenRef, {
-                token: currentToken,
-                uid: user.uid,
-                email: user.email,
-                updatedAt: serverTimestamp(),
-                lastPlatform: navigator.userAgent
-              }, { merge: true });
-            }
-
-            // Handle foreground alerts while site is open
-            onMessage(messaging, (payload) => {
-              new Notification(payload.notification.title, {
-                body: payload.notification.body,
-                icon: '/logo192.png'
+        // Line 28: Once the email is selected, register this device in Firestore
+        if (user) {
+          try {
+            const permission = await Notification.requestPermission();
+            if (permission === 'granted') {
+              const currentToken = await getToken(messaging, {
+                vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
+                serviceWorkerRegistration: await navigator.serviceWorker.register('/firebase-messaging-sw.js')
               });
-            });
+
+              if (currentToken) {
+                const tokenRef = doc(db, 'fcm_tokens', currentToken.substring(0, 20));
+                await setDoc(tokenRef, {
+                  token: currentToken,
+                  uid: user.uid,
+                  email: user.email, // Registered Email ID
+                  updatedAt: serverTimestamp(),
+                  platform: navigator.userAgent
+                }, { merge: true });
+              }
+            }
+          } catch (error) {
+            console.error("FCM Registration failed:", error);
           }
-        } catch (error) {
-          console.error("FCM Initialization failed:", error);
         }
       });
     };
