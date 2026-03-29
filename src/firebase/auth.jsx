@@ -18,21 +18,18 @@ const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 const AuthContext = createContext();
 
-// Line 18: Admin UID for restricted broadcast access
 const ADMIN_UID = 'eurBOkHyrMMbeti2vzGKPpqFDO13';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Function: loginWithGoogle
-  // Line 26: Handles the one-tap popup and Firestore registration
+  // Line 27: Removed 'export' keyword and renamed variable to 'loggedUser'
   const loginWithGoogle = async () => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const loggedUser = result.user;
 
-      // Register the email in the subscribers collection
       const userRef = doc(db, "subscribers", loggedUser.uid);
       await setDoc(userRef, {
         email: loggedUser.email,
@@ -43,7 +40,7 @@ export const AuthProvider = ({ children }) => {
 
       return loggedUser;
     } catch (error) {
-      console.error("Line 43: Auth/Registration failed", error);
+      console.error("Authentication failed:", error);
     }
   };
 
@@ -65,8 +62,16 @@ export const AuthProvider = ({ children }) => {
 
   const isAdmin = user ? user.uid === ADMIN_UID : false;
 
+  const value = {
+    user,
+    isAdmin,
+    loginWithGoogle,
+    logout,
+    loading
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isAdmin, loginWithGoogle, logout, loading }}>
+    <AuthContext.Provider value={value}>
       {!loading && children}
     </AuthContext.Provider>
   );
@@ -74,6 +79,8 @@ export const AuthProvider = ({ children }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used within an AuthProvider");
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
   return context;
 };
