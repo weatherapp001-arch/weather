@@ -21,6 +21,7 @@ const mapApiToMaterialIcon = (id, iconCode) => {
   return isNight ? 'clear_night' : 'sunny';
 };
 
+
 const generateSmoothPath = (dataPoints, maxValue, minValue = 0) => {
   if (!dataPoints || dataPoints.length === 0) return 'M0,100 L800,100'; 
   let points = [...dataPoints];

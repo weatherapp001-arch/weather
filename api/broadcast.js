@@ -1,6 +1,4 @@
-import { db, messaging, auth } from './lib/firebaseAdmin.js';
-
-const ADMIN_UID = "eurBOkHyrMMbeti2vzGKPpqFDO13"; 
+import { db, messaging } from './lib/firebaseAdmin.js';
 
 export default async function handler(req, res) {
   // Always set content-type to JSON
@@ -11,31 +9,27 @@ export default async function handler(req, res) {
   }
 
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ success: false, error: 'No token' });
-
-    const idToken = authHeader.split('Bearer ')[1];
-    const decodedToken = await auth.verifyIdToken(idToken);
-
-    // Skip UID check ONLY if testing on localhost
-    const isLocal = req.headers.host.includes('localhost');
-    if (decodedToken.uid !== ADMIN_UID && !isLocal) {
-      return res.status(403).json({ success: false, error: 'Not Admin' });
-    }
+    // --- AUTHENTICATION COMPLETELY REMOVED ---
+    // We are now trusting the payload directly for simplicity
 
     const { title, body } = req.body;
+    
+    // Fetch all synced tokens from your Firestore fcm_tokens collection
     const snapshot = await db.collection('fcm_tokens').get();
     const tokens = snapshot.docs.map(doc => doc.data().token).filter(t => t);
 
+    // If no devices are registered, just return a success with 0 count
     if (tokens.length === 0) {
       return res.status(200).json({ success: true, sentCount: 0 });
     }
 
+    // Format the payload
     const message = {
       notification: { title, body },
       tokens: tokens,
     };
 
+    // Broadcast to all devices
     const response = await messaging.sendEachForMulticast(message);
 
     return res.status(200).json({ 
@@ -44,8 +38,8 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error(error);
-    // CRITICAL: Always return JSON here to prevent "Unexpected end of JSON"
+    console.error("Broadcast Execution Error:", error);
+    // Return a safe 500 JSON response so the frontend can read the exact failure
     return res.status(500).json({ 
       success: false, 
       error: error.message 

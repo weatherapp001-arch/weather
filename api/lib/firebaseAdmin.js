@@ -24,4 +24,5 @@ if (!admin.apps.length) {
 // Export the specific services you need for your API routes
 export const db = admin.firestore();
 export const messaging = admin.messaging();
+export const auth = admin.auth(); // <-- ADDED THIS LINE
 export default admin;

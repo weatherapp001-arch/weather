@@ -122,11 +122,34 @@ const AlertPanel = ({ searchQuery }) => {
 
   // --- LOGIC: Handle Dispatch ---
   // Line 128: Added improved response handling to prevent JSON errors
+  // File: AlertPanel.jsx
+// Function: AlertPanel -> saveContacts
+// Line: Insert around line 126
+
+  // --- FIRESTORE: Push Contacts ---
+  const saveContacts = async () => {
+    if (!silentUid) return alert("⚠️ Authentication required to push contacts.");
+    setLoading(true);
+    try {
+      const docRef = doc(db, "alertSlots", silentUid);
+      // Using merge: true ensures we don't overwrite other potential data in the doc
+      await setDoc(docRef, { list: contactsList }, { merge: true });
+      alert("✅ Contacts successfully pushed to database.");
+    } catch (err) { 
+      console.error("Push Error:", err); 
+      alert("❌ Failed to push contacts.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  // --- LOGIC: Handle Dispatch ---
   const handleDispatch = async (e) => {
     e.preventDefault();
+    
     if (dispatchMode === 'broadcast') {
       if (!isVerifiedAdmin) return alert("❌ Admin access required.");
       setLoading(true);
+      
       try {
         const user = auth.currentUser;
         if (!user) throw new Error("Authentication required.");
@@ -144,22 +167,33 @@ const AlertPanel = ({ searchQuery }) => {
           }),
         });
 
-        // Line 152: Safer JSON parsing
+        // 1. Get the raw text first (in case it's an HTML 502 error page)
         const text = await response.text();
-        const result = text ? JSON.parse(text) : {};
+        let result = {};
+        
+        // 2. Safely attempt to parse the JSON
+        try {
+          result = text ? JSON.parse(text) : {};
+        } catch (parseError) {
+          // If parsing fails, it means the server didn't send JSON (likely a 500 or 502)
+          throw new Error(`Server Unreachable: HTTP ${response.status} (${response.statusText}). Are you running 'vercel dev'?`);
+        }
 
+        // 3. Evaluate the parsed API response
         if (response.ok && result.success) {
           alert(`🚀 Broadcast Successful! Sent to ${result.sentCount} devices.`);
         } else {
-          throw new Error(result.error || "Broadcast rejected.");
+          throw new Error(result.error || `API Error: HTTP ${response.status} - Broadcast failed.`);
         }
+        
       } catch (err) {
         alert(`❌ Dispatch Error: ${err.message}`);
       } finally {
         setLoading(false);
       }
+      
     } else {
-      // Email Logic...
+      // Email Logic
       if (selectedEmails.length === 0) return alert("⚠️ Select a recipient.");
       setLoading(true);
       emailjs.send(
@@ -199,9 +233,17 @@ const AlertPanel = ({ searchQuery }) => {
     if (!targetCity || !WEATHER_KEY) return;
     setLoading(true);
     try {
-      const wUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(targetCity)}&units=metric&appid=${WEATHER_KEY}`;
+      // API Name mapping for legacy OpenWeatherMap 2.5 databases
+      const apiCity = targetCity.toLowerCase() === "prayagraj" ? "Allahabad" : targetCity;
+      
+      const wUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(apiCity)}&units=metric&appid=${WEATHER_KEY}`;
       const wRes = await fetch(wUrl);
       const wData = await wRes.json();
+      
+      // Check if the API request was successful before accessing nested objects
+      if (!wRes.ok) {
+        throw new Error(wData.message || "Failed to fetch weather data. Check city name.");
+      }
       
       const aqiRes = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${wData.city.coord.lat}&lon=${wData.city.coord.lon}&appid=${WEATHER_KEY}`);
       const aqiData = await aqiRes.json();
@@ -211,7 +253,7 @@ const AlertPanel = ({ searchQuery }) => {
       const forecastTime = formatCityTime(futureWeather.dt, wData.city.timezone);
 
       setFormData({
-        city: targetCity,
+        city: targetCity, // Keeps the original name (e.g., Prayagraj) in your UI
         time: forecastTime,
         temp: `${Math.round(futureWeather.main.temp)}°C`,
         condition: futureWeather.weather[0].main,
@@ -219,7 +261,14 @@ const AlertPanel = ({ searchQuery }) => {
         advice: actualAQI > 100 ? "Wear a mask." : "Conditions clear."
       });
     } catch (err) {
-      console.error(err);
+      console.error("Environmental Fetch Error:", err.message);
+      // Fallback state so the UI doesn't hang or display undefined data
+      setFormData(prev => ({
+        ...prev,
+        condition: "API Error",
+        threat: "Unknown",
+        advice: "Could not fetch city data. Please verify the spelling or API status."
+      }));
     } finally {
       setLoading(false);
     }
@@ -276,7 +325,7 @@ const AlertPanel = ({ searchQuery }) => {
               <>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '10px' }}>
                   <button type="button" onClick={fetchContacts} style={syncBtnStyle}>Pull</button>
-                  <button type="button" onClick={() => {}} style={saveBtnStyle}>Push</button>
+                 <button type="button" onClick={saveContacts} style={saveBtnStyle}>Push</button>
                 </div>
                 <div className="hide-scroll" style={scrollContainer}>
                   {contactsList.map(email => (
