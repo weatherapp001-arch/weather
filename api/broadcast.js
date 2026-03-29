@@ -24,11 +24,26 @@ export default async function handler(req, res) {
     }
 
     // Format the payload
+   // Format the payload for high-priority delivery
     const message = {
-      notification: { title, body },
+      notification: { 
+        title, 
+        body,
+        // Added icon for native feel
+        image: 'https://weather-alert-7a801.web.app/logo192.png' 
+      },
+      // This is crucial for Android/iOS background delivery
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'weather_alerts',
+          priority: 'max',
+          defaultSound: true,
+          defaultVibrateTimings: true
+        }
+      },
       tokens: tokens,
     };
-
     // Broadcast to all devices
     const response = await messaging.sendEachForMulticast(message);
 

@@ -8,7 +8,7 @@ import { getToken } from "firebase/messaging";
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 const AlertPanel = ({ searchQuery }) => {
-  // Line 13: Your verified Admin UID
+  // Line 13: Your verified Admin UID[cite: 2]
   const MASTER_ADMIN_UID = "eurBOkHyrMMbeti2vzGKPpqFDO13";
   const WEATHER_KEY = import.meta.env.VITE_WEATHER_API_KEY;
 
@@ -30,11 +30,13 @@ const AlertPanel = ({ searchQuery }) => {
   }
   const currentCity = rawCity.replace(/\+/g, ' ').trim();
 
+  // Updated Line 33: Complete state tracking for UI and Email[cite: 2]
   const [formData, setFormData] = useState({
     city: currentCity,
     threat: "Initializing...",
     time: "--",
     temp: "--",
+    aqi: "--",
     condition: "Waiting...",
     advice: "Click 'Update' to fetch the latest predictive data."
   });
@@ -45,12 +47,11 @@ const AlertPanel = ({ searchQuery }) => {
   };
 
   // --- AUTH & ADMIN VERIFICATION ---
-  // Line 51: Updated to Force Unlock Admin on Localhost for testing
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setSilentUid(user.uid);
-        // Unlock if UID matches OR if testing on localhost
+        // Force unlock admin on localhost or if UID matches[cite: 2]
         if (user.uid === MASTER_ADMIN_UID || window.location.hostname === "localhost") {
           setIsVerifiedAdmin(true);
         }
@@ -63,11 +64,10 @@ const AlertPanel = ({ searchQuery }) => {
         }
       }
     });
-
     return () => unsubscribe();
   }, [MASTER_ADMIN_UID]);
 
-  // --- FCM: Automated Background Registration ---
+  // --- FCM: Background Registration ---
   useEffect(() => {
     const autoRegisterDevice = async () => {
       try {
@@ -84,7 +84,6 @@ const AlertPanel = ({ searchQuery }) => {
               lastSeen: new Date(),
               device: navigator.userAgent
             }, { merge: true });
-            console.log("📡 Device Auto-Synced.");
           }
         }
       } catch (error) {
@@ -94,14 +93,6 @@ const AlertPanel = ({ searchQuery }) => {
     autoRegisterDevice();
   }, []);
 
-  // --- SECURITY: Force Reset Dispatch Mode ---
-  useEffect(() => {
-    if (!isVerifiedAdmin && dispatchMode === 'broadcast') {
-      setDispatchMode('email');
-    }
-  }, [isVerifiedAdmin, dispatchMode]);
-
-  // --- FIRESTORE: Fetch Contacts ---
   const fetchContacts = useCallback(async () => {
     if (!silentUid) return; 
     setLoading(true);
@@ -120,41 +111,52 @@ const AlertPanel = ({ searchQuery }) => {
     }
   }, [silentUid]);
 
-  // --- LOGIC: Handle Dispatch ---
-  // Line 128: Added improved response handling to prevent JSON errors
-  // File: AlertPanel.jsx
-// Function: AlertPanel -> saveContacts
-// Line: Insert around line 126
-
-  // --- FIRESTORE: Push Contacts ---
   const saveContacts = async () => {
-    if (!silentUid) return alert("⚠️ Authentication required to push contacts.");
+    if (!silentUid) return alert("⚠️ Authentication required.");
     setLoading(true);
     try {
       const docRef = doc(db, "alertSlots", silentUid);
-      // Using merge: true ensures we don't overwrite other potential data in the doc
       await setDoc(docRef, { list: contactsList }, { merge: true });
-      alert("✅ Contacts successfully pushed to database.");
+      alert("✅ Contacts successfully synced.");
     } catch (err) { 
-      console.error("Push Error:", err); 
       alert("❌ Failed to push contacts.");
     } finally {
       setLoading(false);
     }
   };
-  // --- LOGIC: Handle Dispatch ---
+
+  const calculateUS_AQI = (pm25) => {
+    if (!pm25) return 20;
+    if (pm25 <= 12.0) return Math.round((50 / 12.0) * pm25);
+    if (pm25 <= 35.4) return Math.round(((100 - 51) / (35.4 - 12.1)) * (pm25 - 12.1) + 51);
+    if (pm25 <= 55.4) return Math.round(((150 - 101) / (55.4 - 35.5)) * (pm25 - 35.5) + 101);
+    if (pm25 <= 150.4) return Math.round(((200 - 151) / (150.4 - 55.5)) * (pm25 - 55.5) + 151);
+    return 300;
+  };
+
+  const generateAdvancedAlert = (metrics) => {
+    const alerts = [];
+    if (metrics.aqi > 150) alerts.push(`⚠️ AQI: ${metrics.aqi} (Unhealthy).`);
+    if (metrics.windSpeed > 17) alerts.push(`💨 High Winds detected.`);
+    if (metrics.temp >= 40) alerts.push(`🔥 Extreme Heat Alert.`);
+
+    if (alerts.length === 0) {
+      return { 
+        threat: "Safe (Next 3 Hrs)", 
+        advice: `Target Local Time: ${metrics.time}. No significant atmospheric hazards predicted.` 
+      };
+    }
+    return { threat: "Weather Warning", advice: `Predicted for ${metrics.time}: ` + alerts.join(" ") };
+  };
+
   const handleDispatch = async (e) => {
     e.preventDefault();
-    
     if (dispatchMode === 'broadcast') {
       if (!isVerifiedAdmin) return alert("❌ Admin access required.");
       setLoading(true);
-      
       try {
         const user = auth.currentUser;
-        if (!user) throw new Error("Authentication required.");
         const idToken = await user.getIdToken(true);
-
         const response = await fetch('/api/broadcast', {
           method: 'POST',
           headers: { 
@@ -163,37 +165,18 @@ const AlertPanel = ({ searchQuery }) => {
           },
           body: JSON.stringify({
             title: `🚨 EMERGENCY: ${formData.threat}`,
-            body: formData.advice
+            body: `Alert for ${formData.city}: ${formData.advice}`
           }),
         });
-
-        // 1. Get the raw text first (in case it's an HTML 502 error page)
-        const text = await response.text();
-        let result = {};
-        
-        // 2. Safely attempt to parse the JSON
-        try {
-          result = text ? JSON.parse(text) : {};
-        } catch (parseError) {
-          // If parsing fails, it means the server didn't send JSON (likely a 500 or 502)
-          throw new Error(`Server Unreachable: HTTP ${response.status} (${response.statusText}). Are you running 'vercel dev'?`);
-        }
-
-        // 3. Evaluate the parsed API response
-        if (response.ok && result.success) {
-          alert(`🚀 Broadcast Successful! Sent to ${result.sentCount} devices.`);
-        } else {
-          throw new Error(result.error || `API Error: HTTP ${response.status} - Broadcast failed.`);
-        }
-        
+        const result = await response.json();
+        if (response.ok && result.success) alert(`🚀 Broadcast Sent!`);
       } catch (err) {
         alert(`❌ Dispatch Error: ${err.message}`);
       } finally {
         setLoading(false);
       }
-      
     } else {
-      // Email Logic
+      // Corrected Line 178: Mapping all missing fields to EmailJS[cite: 2]
       if (selectedEmails.length === 0) return alert("⚠️ Select a recipient.");
       setLoading(true);
       emailjs.send(
@@ -203,21 +186,16 @@ const AlertPanel = ({ searchQuery }) => {
           to_emails: selectedEmails.join(","),
           city: formData.city,
           threat: formData.threat,
+          condition: formData.condition, 
+          temp: formData.temp,           
+          aqi: formData.aqi,             
           advice: formData.advice
         },
         import.meta.env.VITE_EMAILJS_PUBLIC_KEY
-      ).then(() => alert("✅ Email Sent!"))
+      ).then(() => alert("✅ Detailed Email Sent!"))
        .catch(() => alert("❌ Email Failed."))
        .finally(() => setLoading(false));
     }
-  };
-
-  // --- HELPERS (AQI, Time, Weather) ---
-  const calculateUS_AQI = (pm25) => {
-    if (!pm25) return 20; 
-    if (pm25 <= 12.0) return Math.round((50 / 12.0) * pm25);
-    if (pm25 <= 35.4) return Math.round(((100 - 51) / (35.4 - 12.1)) * (pm25 - 12.1) + 51);
-    return 150; 
   };
 
   const formatCityTime = (dtUTC, timezoneOffsetSeconds) => {
@@ -233,42 +211,34 @@ const AlertPanel = ({ searchQuery }) => {
     if (!targetCity || !WEATHER_KEY) return;
     setLoading(true);
     try {
-      // API Name mapping for legacy OpenWeatherMap 2.5 databases
-      const apiCity = targetCity.toLowerCase() === "prayagraj" ? "Allahabad" : targetCity;
-      
-      const wUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(apiCity)}&units=metric&appid=${WEATHER_KEY}`;
+      const wUrl = `https://api.openweathermap.org/data/2.5/forecast?q=${encodeURIComponent(targetCity === 'Prayagraj' ? 'Allahabad' : targetCity)}&units=metric&appid=${WEATHER_KEY}`;
       const wRes = await fetch(wUrl);
       const wData = await wRes.json();
-      
-      // Check if the API request was successful before accessing nested objects
-      if (!wRes.ok) {
-        throw new Error(wData.message || "Failed to fetch weather data. Check city name.");
-      }
-      
-      const aqiRes = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${wData.city.coord.lat}&lon=${wData.city.coord.lon}&appid=${WEATHER_KEY}`);
+      const { lat, lon } = wData.city.coord;
+
+      const aqiRes = await fetch(`https://api.openweathermap.org/data/2.5/air_pollution/forecast?lat=${lat}&lon=${lon}&appid=${WEATHER_KEY}`);
       const aqiData = await aqiRes.json();
 
-      const futureWeather = wData.list[1];
-      const actualAQI = calculateUS_AQI(aqiData.list[0].components.pm2_5);
+      // Look-ahead window shifted to 3 hours (10,800 seconds)[cite: 2]
+      const targetSeconds = Math.floor(Date.now() / 1000) + 10800; 
+      const futureWeather = wData.list.reduce((prev, curr) => Math.abs(curr.dt - targetSeconds) < Math.abs(prev.dt - targetSeconds) ? curr : prev);
+      const futureAQI = aqiData.list.reduce((prev, curr) => Math.abs(curr.dt - targetSeconds) < Math.abs(prev.dt - targetSeconds) ? curr : prev);
+
+      const actualAQI = calculateUS_AQI(futureAQI.components.pm2_5);
       const forecastTime = formatCityTime(futureWeather.dt, wData.city.timezone);
+      const alertInfo = generateAdvancedAlert({ aqi: actualAQI, time: forecastTime, windSpeed: futureWeather.wind.speed, temp: futureWeather.main.temp });
 
       setFormData({
-        city: targetCity, // Keeps the original name (e.g., Prayagraj) in your UI
+        city: targetCity,
         time: forecastTime,
         temp: `${Math.round(futureWeather.main.temp)}°C`,
+        aqi: actualAQI,
         condition: futureWeather.weather[0].main,
-        threat: actualAQI > 100 ? "Toxic Air" : "Safe",
-        advice: actualAQI > 100 ? "Wear a mask." : "Conditions clear."
+        threat: alertInfo.threat,
+        advice: alertInfo.advice
       });
     } catch (err) {
-      console.error("Environmental Fetch Error:", err.message);
-      // Fallback state so the UI doesn't hang or display undefined data
-      setFormData(prev => ({
-        ...prev,
-        condition: "API Error",
-        threat: "Unknown",
-        advice: "Could not fetch city data. Please verify the spelling or API status."
-      }));
+      setFormData(prev => ({ ...prev, threat: "Sync Interrupted" }));
     } finally {
       setLoading(false);
     }
@@ -295,29 +265,24 @@ const AlertPanel = ({ searchQuery }) => {
             <span className="material-symbols-outlined" style={{ fontSize: '36px' }}>emergency_home</span>
             Emergency Dispatch System
           </h2>
-          <p style={{ fontSize: '12px', opacity: 0.7, margin: '5px 0 0 0' }}>
-            {isVerifiedAdmin ? "ADMIN CONTROL UNLOCKED" : "STANDARD DISPATCH MODE"}
-          </p>
         </div>
 
         <form onSubmit={handleDispatch} style={formStyle}>
+          {/* Dispatch Section with Restore Toggle Button[cite: 2] */}
           <div style={innerSectionStyle}>
             <div style={sectionTopRowStyle}>
               <h4 style={labelStyle}>
-                <span className="material-symbols-outlined">network_manage</span> 1. Dispatch Mode
+                <span className="material-symbols-outlined">
+                  {dispatchMode === 'email' ? 'mail' : 'cell_tower'}
+                </span> 
+                1. {dispatchMode === 'email' ? 'Email Dispatch' : 'Broadcast'}
               </h4>
               
-              {isVerifiedAdmin ? (
+              {isVerifiedAdmin && (
                 <div style={toggleContainerStyle}>
-                  <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>
-                    Emails
-                  </button>
-                  <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>
-                    Broadcast
-                  </button>
+                  <button type="button" onClick={() => setDispatchMode('email')} style={dispatchMode === 'email' ? activeToggleStyle : inactiveToggleStyle}>Email</button>
+                  <button type="button" onClick={() => setDispatchMode('broadcast')} style={dispatchMode === 'broadcast' ? activeToggleStyle : inactiveToggleStyle}>Broadcast</button>
                 </div>
-              ) : (
-                <div style={{ color: '#aaa', fontSize: '12px' }}>Email Only</div>
               )}
             </div>
             
@@ -325,7 +290,7 @@ const AlertPanel = ({ searchQuery }) => {
               <>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '10px' }}>
                   <button type="button" onClick={fetchContacts} style={syncBtnStyle}>Pull</button>
-                 <button type="button" onClick={saveContacts} style={saveBtnStyle}>Push</button>
+                  <button type="button" onClick={saveContacts} style={saveBtnStyle}>Push</button>
                 </div>
                 <div className="hide-scroll" style={scrollContainer}>
                   {contactsList.map(email => (
@@ -342,25 +307,25 @@ const AlertPanel = ({ searchQuery }) => {
               </>
             ) : (
               <div style={broadcastNoticeStyle}>
-                <span className="material-symbols-outlined" style={{ fontSize: '36px', color: '#ff4d4d' }}>cell_tower</span>
-                <p style={{ margin: '10px 0 0 0', fontWeight: 'bold' }}>Broadcast Active</p>
-                <p style={{ fontSize: '12px', opacity: 0.6 }}>Background Syncing is live.</p>
+                <span className="material-symbols-outlined" style={{ fontSize: '42px', color: '#ff4d4d' }}>sensors</span>
+                <p style={{ margin: '10px 0 5px 0', fontWeight: 'bold', color: '#ff4d4d' }}>BROADCAST MODE ACTIVE</p>
+                <p style={{ fontSize: '12px', opacity: 0.7 }}>Message will be sent to all subscribed FCM tokens.</p>
               </div>
             )}
           </div>
 
+          {/* Variables Grid[cite: 2] */}
           <div style={innerSectionStyle}>
             <div style={sectionTopRowStyle}>
-              <h4 style={labelStyle}>Variables</h4>
+              <h4 style={labelStyle}>2. Variables</h4>
               <button type="button" onClick={() => fetchEnvironmentalData(currentCity)} style={syncBtnStyle}>Update</button>
             </div>
             <div style={variableGrid}>
-              <div style={inputGroupStyle}>
-                <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} />
-              </div>
-              <div style={inputGroupStyle}>
-                <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} />
-              </div>
+              <input name="city" value={formData.city} onChange={handleFormChange} style={editableInputStyle} placeholder="City" />
+              <input name="threat" value={formData.threat} onChange={handleFormChange} style={editableInputStyle} placeholder="Threat" />
+              <input name="condition" value={formData.condition} onChange={handleFormChange} style={editableInputStyle} placeholder="Condition" />
+              <input name="temp" value={`${formData.temp} (AQI: ${formData.aqi})`} readOnly style={editableInputStyle} placeholder="Temp/AQI" />
+              
               <div style={textareaGroupStyle}>
                 <textarea name="advice" value={formData.advice} onChange={handleFormChange} style={editableTextareaStyle} rows="3" />
               </div>
@@ -368,7 +333,7 @@ const AlertPanel = ({ searchQuery }) => {
           </div>
 
           <button type="submit" style={dispatchBtnStyle}>
-            {dispatchMode === 'email' ? 'Send Emails' : 'Send Broadcast'}
+            {dispatchMode === 'email' ? 'Send Emergency Emails' : 'Trigger Global Broadcast'}
           </button>
         </form>
       </div>
@@ -376,264 +341,31 @@ const AlertPanel = ({ searchQuery }) => {
   );
 };
 
-// --- STYLES ---
-const viewportStyle = {
-  height: '100%',
-  width: '100%',
-  display: 'flex',
-  justifyContent: 'center',
-  alignItems: 'flex-start',
-  overflowY: 'auto',
-  padding: '20px 0',
-  paddingBottom: '60px'
-};
-
-const cardStyle = {
-  width: '90%',
-  maxWidth: '600px',
-  padding: '25px',
-  borderRadius: '20px',
-  background: 'rgba(255,255,255,0.05)',
-  backdropFilter: 'blur(15px)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  position: 'relative',
-  marginBottom: '30px'
-};
-
-const headerContainerStyle = {
-  borderBottom: '1px solid rgba(255,255,255,0.1)',
-  paddingBottom: '15px',
-  marginBottom: '20px'
-};
-
-const headerStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '12px',
-  color: '#ff4d4d',
-  margin: 0
-};
-
-const formStyle = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '15px'
-};
-
-const innerSectionStyle = {
-  background: 'rgba(0,0,0,0.2)',
-  padding: '15px',
-  borderRadius: '12px',
-  border: '1px solid rgba(255,255,255,0.05)'
-};
-
-const sectionTopRowStyle = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  marginBottom: '10px'
-};
-
-const labelStyle = {
-  margin: 0,
-  fontSize: '16px',
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  opacity: 0.8
-};
-
-const toggleContainerStyle = {
-  display: 'flex',
-  background: 'rgba(0,0,0,0.4)',
-  padding: '4px',
-  borderRadius: '8px',
-  gap: '5px'
-};
-
-const activeToggleStyle = {
-  background: '#ff4d4d',
-  color: 'white',
-  border: 'none',
-  padding: '6px 12px',
-  borderRadius: '5px',
-  fontSize: '12px',
-  fontWeight: 'bold',
-  cursor: 'pointer',
-  transition: 'all 0.3s ease'
-};
-
-const inactiveToggleStyle = {
-  background: 'transparent',
-  color: 'rgba(255,255,255,0.6)',
-  border: 'none',
-  padding: '6px 12px',
-  borderRadius: '5px',
-  fontSize: '12px',
-  cursor: 'pointer',
-  transition: 'all 0.3s ease'
-};
-
-const broadcastNoticeStyle = {
-  textAlign: 'center',
-  padding: '20px',
-  background: 'rgba(255,77,77,0.05)',
-  borderRadius: '8px',
-  border: '1px dashed rgba(255,77,77,0.5)'
-};
-
-const scrollContainer = {
-  maxHeight: '100px',
-  overflowY: 'auto',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '6px'
-};
-
-const variableGrid = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: '10px'
-};
-
-const inputGroupStyle = {
-  position: 'relative',
-  display: 'flex',
-  alignItems: 'center'
-};
-
-const iconInsideStyle = {
-  position: 'absolute',
-  left: '10px',
-  color: 'rgba(255,255,255,0.7)',
-  pointerEvents: 'none',
-  fontSize: '18px'
-};
-
-const editableInputStyle = {
-  width: '100%',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.2)',
-  padding: '10px 10px 10px 35px',
-  borderRadius: '8px',
-  color: 'white',
-  fontSize: '13px',
-  outline: 'none'
-};
-
-const textareaGroupStyle = {
-  position: 'relative',
-  display: 'flex',
-  gridColumn: '1 / -1'
-};
-
-const iconInsideTextareaStyle = {
-  position: 'absolute',
-  left: '10px',
-  top: '12px',
-  color: 'rgba(255,255,255,0.7)',
-  pointerEvents: 'none',
-  fontSize: '18px'
-};
-
-const editableTextareaStyle = {
-  width: '100%',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.2)',
-  padding: '10px 10px 10px 35px',
-  borderRadius: '8px',
-  color: 'white',
-  fontSize: '13px',
-  outline: 'none',
-  resize: 'vertical',
-  minHeight: '60px'
-};
-
-const inputContainerStyle = {
-  display: 'flex',
-  gap: '10px',
-  marginTop: '10px'
-};
-
-const inputStyle = {
-  flex: 1,
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.1)',
-  padding: '8px',
-  borderRadius: '6px',
-  color: 'white'
-};
-
-const addBtnStyle = {
-  padding: '0 15px',
-  background: '#A3E4D7',
-  border: 'none',
-  borderRadius: '6px',
-  fontWeight: 'bold',
-  cursor: 'pointer',
-  color: 'black'
-};
-
-const syncBtnStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '4px',
-  background: 'transparent',
-  border: '1px solid #A3E4D7',
-  color: '#A3E4D7',
-  padding: '4px 10px',
-  borderRadius: '5px',
-  fontSize: '12px',
-  cursor: 'pointer'
-};
-
-const saveBtnStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '4px',
-  background: '#A3E4D7',
-  border: '1px solid #A3E4D7',
-  color: 'black',
-  padding: '4px 10px',
-  borderRadius: '5px',
-  fontSize: '12px',
-  cursor: 'pointer',
-  fontWeight: 'bold'
-};
-
-const dispatchBtnStyle = {
-  padding: '15px',
-  background: '#ff4d4d',
-  color: 'white',
-  border: 'none',
-  borderRadius: '10px',
-  fontWeight: 'bold',
-  cursor: 'pointer',
-  fontSize: '16px',
-  marginTop: '10px'
-};
-
-const contactItemStyle = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '10px',
-  fontSize: '13px',
-  padding: '4px',
-  cursor: 'pointer'
-};
-
-const loaderOverlayStyle = {
-  position: 'absolute',
-  inset: 0,
-  background: 'rgba(0,0,0,0.85)',
-  zIndex: 10,
-  display: 'flex',
-  flexDirection: 'column',
-  justifyContent: 'center',
-  alignItems: 'center',
-  borderRadius: '20px',
-  color: '#A3E4D7',
-  fontWeight: 'bold'
-};
+// --- STYLES[cite: 2] ---
+const viewportStyle = { height: '100%', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'flex-start', overflowY: 'auto', padding: '20px 0', paddingBottom: '60px' };
+const cardStyle = { width: '90%', maxWidth: '600px', padding: '25px', borderRadius: '20px', background: 'rgba(255,255,255,0.05)', backdropFilter: 'blur(15px)', border: '1px solid rgba(255,255,255,0.1)', position: 'relative', marginBottom: '30px' };
+const headerContainerStyle = { borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '15px', marginBottom: '20px' };
+const headerStyle = { display: 'flex', alignItems: 'center', gap: '12px', color: '#ff4d4d', margin: 0 };
+const formStyle = { display: 'flex', flexDirection: 'column', gap: '15px' };
+const innerSectionStyle = { background: 'rgba(0,0,0,0.2)', padding: '15px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' };
+const sectionTopRowStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' };
+const labelStyle = { margin: 0, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.8 };
+const syncBtnStyle = { display: 'flex', alignItems: 'center', gap: '4px', background: 'transparent', border: '1px solid #A3E4D7', color: '#A3E4D7', padding: '4px 10px', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' };
+const saveBtnStyle = { display: 'flex', alignItems: 'center', gap: '4px', background: '#A3E4D7', border: '1px solid #A3E4D7', color: 'black', padding: '4px 10px', borderRadius: '5px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' };
+const variableGrid = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' };
+const editableInputStyle = { width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.2)', padding: '10px', borderRadius: '8px', color: 'white', fontSize: '13px', outline: 'none' };
+const textareaGroupStyle = { position: 'relative', display: 'flex', gridColumn: '1 / -1' };
+const editableTextareaStyle = { width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.2)', padding: '10px', borderRadius: '8px', color: 'white', fontSize: '13px', outline: 'none', resize: 'vertical', minHeight: '60px' };
+const dispatchBtnStyle = { padding: '15px', background: '#ff4d4d', color: 'white', border: 'none', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', fontSize: '16px', marginTop: '10px' };
+const inputStyle = { flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', padding: '8px', borderRadius: '6px', color: 'white' };
+const addBtnStyle = { padding: '0 15px', background: '#A3E4D7', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', color: 'black' };
+const scrollContainer = { maxHeight: '100px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' };
+const contactItemStyle = { display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', padding: '4px', cursor: 'pointer' };
+const inputContainerStyle = { display: 'flex', gap: '10px', marginTop: '10px' };
+const loaderOverlayStyle = { position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 10, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', borderRadius: '20px', color: '#A3E4D7', fontWeight: 'bold' };
+const toggleContainerStyle = { display: 'flex', background: 'rgba(0,0,0,0.4)', padding: '4px', borderRadius: '8px', gap: '5px' };
+const activeToggleStyle = { background: '#ff4d4d', color: 'white', border: 'none', padding: '6px 12px', borderRadius: '5px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' };
+const inactiveToggleStyle = { background: 'transparent', color: 'rgba(255,255,255,0.6)', border: 'none', padding: '6px 12px', borderRadius: '5px', fontSize: '12px', cursor: 'pointer' };
+const broadcastNoticeStyle = { textAlign: 'center', padding: '20px', background: 'rgba(255,77,77,0.05)', borderRadius: '8px', border: '1px dashed rgba(255,77,77,0.5)' };
 
 export default AlertPanel;

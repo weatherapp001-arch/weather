@@ -47,41 +47,25 @@ self.addEventListener('fetch', (event) => {
 });
 
 // --- FCM BACKGROUND LISTENER ---
-messaging.onBackgroundMessage(async (payload) => {
-    const notificationTitle = payload.notification.title;
-    
-    // Define options with basic properties
+// --- FCM BACKGROUND LISTENER ---
+// This runs when the app is CLOSED or in the background
+messaging.onBackgroundMessage((payload) => {
+    console.log('[Service Worker] Background Message:', payload);
+
+    const notificationTitle = payload.notification.title || "Weather Alert";
     const notificationOptions = {
-        body: payload.notification.body,
-        icon: payload.notification.icon || '/default-icon.png',
-        tag: 'weather-alert',
-        data: payload.data
+        body: payload.notification.body || "Check your dashboard for updates.",
+        icon: '/logo192.png',
+        badge: '/logo192.png', // Small icon for the status bar
+        tag: 'weather-alert-sync', // Prevents duplicate notifications
+        renotify: true,
+        data: payload.data,
+        actions: [
+            { action: 'open', title: 'View Details' }
+        ]
     };
 
-    // Logic to safely handle line 44 network fetch for images/assets
-    if (payload.notification.image) {
-        try {
-            // Attempt to fetch the resource
-            const response = await fetch(payload.notification.image, { 
-                mode: 'no-cors',
-                cache: 'default' 
-            });
-
-            if (!response || !response.ok) {
-                throw new Error('Network response was not valid');
-            }
-            
-            notificationOptions.image = payload.notification.image;
-        } catch (error) {
-            // Line 44: Handling the "Failed to fetch" TypeError gracefully
-            console.warn('[Service Worker] Asset fetch failed, proceeding without image:', error);
-            
-            // By catching the error here, the promise is no longer rejected
-            // We proceed with the notification minus the failing image
-            delete notificationOptions.image;
-        }
-    }
-
+    // Use self.registration to ensure the OS handles the display
     return self.registration.showNotification(notificationTitle, notificationOptions);
 });
 // --- NOTIFICATION CLICK HANDLER ---
