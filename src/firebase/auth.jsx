@@ -11,32 +11,42 @@ import {
   signOut, 
   onAuthStateChanged 
 } from 'firebase/auth';
-import { app } from './config'; // Assuming your Firebase init is in config.js
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { app, db } from './config'; 
 
-// 1. Initialize Firebase Auth and Provider
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
-
-// 2. Create Context
 const AuthContext = createContext();
 
-// 3. Admin Configuration
-const ADMIN_UID = 'eurBOkHyrMMbeti2vzGKPpqFDO13'; // Replace with your actual UID from Firebase Console
+// Line 18: Admin UID for restricted broadcast access
+const ADMIN_UID = 'eurBOkHyrMMbeti2vzGKPpqFDO13';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Sign In Function
+  // Function: loginWithGoogle
+  // Line 26: Handles the one-tap popup and Firestore registration
   const loginWithGoogle = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      const loggedUser = result.user;
+
+      // Register the email in the subscribers collection
+      const userRef = doc(db, "subscribers", loggedUser.uid);
+      await setDoc(userRef, {
+        email: loggedUser.email,
+        displayName: loggedUser.displayName,
+        lastLogin: serverTimestamp(),
+        status: "active"
+      }, { merge: true });
+
+      return loggedUser;
     } catch (error) {
-      console.error("Login Error:", error.message);
+      console.error("Line 43: Auth/Registration failed", error);
     }
   };
 
-  // Logout Function
   const logout = async () => {
     try {
       await signOut(auth);
@@ -45,39 +55,25 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Monitor Auth State
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  // Determine Admin Status
   const isAdmin = user ? user.uid === ADMIN_UID : false;
 
-  const value = {
-    user,
-    isAdmin,
-    loginWithGoogle,
-    logout,
-    loading
-  };
-
   return (
-    <AuthContext.Provider value={value}>
+    <AuthContext.Provider value={{ user, isAdmin, loginWithGoogle, logout, loading }}>
       {!loading && children}
     </AuthContext.Provider>
   );
 };
 
-// 4. Custom Hook for easy access
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 };
