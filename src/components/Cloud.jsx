@@ -1,4 +1,3 @@
-// File: src/components/Cloud.jsx
 import React, { useState, useEffect } from 'react';
 
 // API Configuration
@@ -129,6 +128,7 @@ export default function Cloud({ searchQuery }) {
       const data = await res.json();
       
       if (data.cod === "200") {
+        // FIX: Prioritize passed name and filter hyper-local station names
         let displayName = query.name ? query.name : `${data.city.name}, ${data.city.country}`;
         if (displayName.includes('Jahāngīrābād') || displayName.includes('George Town')) {
           displayName = 'Prayagraj, IN';
@@ -174,6 +174,8 @@ export default function Cloud({ searchQuery }) {
         
         setHourlyData(expanded24Hours);
         setActiveHourIndex(0); 
+      } else {
+        alert("City not found! Please check the spelling.");
       }
     } catch (err) {
       console.error("Network error:", err);
@@ -190,6 +192,7 @@ export default function Cloud({ searchQuery }) {
         fetchWeather({ city: searchQuery.city, name: searchQuery.name });
       }
     } else {
+      // DEFAULT LOGIC: Use GPS if allowed, fallback to Prayagraj to sync with others
       navigator.geolocation.getCurrentPosition(
         (pos) => fetchWeather({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
         () => fetchWeather({ city: 'Prayagraj', name: 'Prayagraj, IN' }) 
@@ -197,8 +200,6 @@ export default function Cloud({ searchQuery }) {
     }
   }, [searchQuery]);
 
-  // UPDATE: Sync Global App Background with selected hour
-  
   if (hourlyData.length === 0) return null;
 
   const selectedHour = hourlyData[activeHourIndex];
@@ -206,13 +207,11 @@ export default function Cloud({ searchQuery }) {
 
   return (
     <div className="cloud-view-container hide-scroll" style={{ padding: '0 10px' }}>
-      {/* 3-Section Glass Card Layout (Matches Second Image) */}
       <div className="glass-card" style={{ flex: 'none', height: '300px', display: 'flex', position: 'relative', padding: 0, overflow: 'hidden', marginBottom: '30px' }}>
         <div style={{ position: 'relative', zIndex: 1, width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 40px' }}>
           
-          {/* Section 1: Left Summary */}
           <div className="summary-left" style={{ textAlign: 'left', flex: 1, color: vibe === 'night' ? 'white' : 'inherit' }}>
-            <h3>{selectedHour.time === 'Now' ? 'Today, 2am' : `Today, ${selectedHour.time}`}</h3>
+            <h3>{selectedHour.time === 'Now' ? 'Now' : `Today, ${selectedHour.time}`}</h3>
             <div className="temp-display" style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
               <span className="huge-temp" style={{ fontSize: '72px', fontWeight: 'bold' }}>{selectedHour.temp}°</span>
               <span className="material-symbols-outlined weather-icon-large" style={{ color: selectedHour.icon.includes('sunny') ? '#FFB74D' : 'white', fontSize: '64px' }}>
@@ -225,25 +224,21 @@ export default function Cloud({ searchQuery }) {
             </h4>
           </div>
 
-          {/* Section 2: Center Snail Cartoon */}
           <div className="summary-center" style={{ flex: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
             <DynamicWeatherSnail vibe={vibe} />
           </div>
 
-          {/* Section 3: Right Comment */}
           <div className="summary-right" style={{ textAlign: 'right', flex: 1, color: vibe === 'night' ? 'white' : 'inherit' }}>
-            <h2 style={{ fontSize: '32px', marginBottom: '10px' }}>{comment}</h2>
-            <p style={{ fontSize: '20px', opacity: 0.9 }}>Feels like <strong>{selectedHour.temp + 2}°</strong></p>
+            <h2>{comment}</h2>
+            <p>Feels like <strong>{selectedHour.temp + 2}°</strong></p>
           </div>
         </div>
       </div>
 
-      {/* Hourly Scroll List */}
-      {/* Hourly Scroll List: Restoring the high-transparency styles of the 1st version */}
-<div className="scroll-wrapper">
-  <div className="hourly-list">
-    {hourlyData.map((item, idx) => (
-      <div 
+      <div className="scroll-wrapper">
+        <div className="hourly-list">
+          {hourlyData.map((item, idx) => (
+            <div 
               key={idx} 
               className={`hourly-item ${activeHourIndex === idx ? 'active' : ''}`}
               onClick={() => setActiveHourIndex(idx)}
@@ -253,20 +248,17 @@ export default function Cloud({ searchQuery }) {
                 transform: activeHourIndex === idx ? 'translateY(-8px)' : '',
                 boxShadow: activeHourIndex === idx ? '0 8px 20px rgba(0,0,0,0.2)' : ''
               }}
-        >
-      
-        <span className="item-time" style={{ opacity: 0.9 }}>{item.time}</span>
-        <span 
-          className="material-symbols-outlined item-icon" 
-          style={{ color: item.icon.includes('sunny') ? '#FFB74D' : 'white' }}
-        >
-          {item.icon}
-        </span>
-        <span className="item-temp" style={{ fontWeight: '600' }}>{item.temp}°</span>
+            >
+              <span className="item-time">{item.time}</span>
+              <span className="material-symbols-outlined item-icon" style={{ color: item.icon.includes('sunny') ? '#FFB74D' : 'inherit' }}>
+                {item.icon}
+              </span>
+              <span className="item-temp">{item.temp}°</span>
+            </div>
+          ))}
+        </div>
+        <div className="scroll-hint-right" style={{ marginBottom: '10px' }}>scroll &rarr;</div>
       </div>
-    ))}
-  </div>
-</div>
     </div>
   );
 }
